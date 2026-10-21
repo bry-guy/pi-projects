@@ -17,7 +17,6 @@ A **project** is a persistent workspace: sessions, repos, memory and scratch fil
 
 ```
 $PI_PROJECTS_DIR/
-  projects.json            # index: [{id, name, state, path}], rebuildable from project dirs
   <name>/
     project.json           # id (uuid), name, state, memory{enabled, prompt}, sessions[]
     memory.md
@@ -29,6 +28,7 @@ $PI_PROJECTS_DIR/
 - **Folder name:** a project folder is named after the project's slug, and slugs are unique.
 - **ID:** the UUID in `project.json` is the real key. A local project needs no coordination with any other machine.
 - **Session list:** `sessions[]` is an index for quick lookup. The authority is the `appendEntry` link inside each session.
+- **No root manifest.** Listing projects reads the root folder and each `project.json`, which is cheap at personal scale. Folder names already guarantee unique names, so an index would add nothing.
 - **Repo list:** there is none. Repos and worktrees are found by scanning `repos/` and `worktrees/`.
 
 ### Commands
@@ -37,7 +37,7 @@ $PI_PROJECTS_DIR/
 |---|---|
 | `/project` | Picker. Open a project (starts a session in the project folder) or create one. Lists that project's sessions. |
 | `/project new <name>` | Creates the folder, `project.json` and an empty `memory.md`. |
-| `/project name <new>` | Moves the folder, rewrites `cwd` in the linked session headers, and updates the index. Leaves no symlinks. |
+| `/project name <new>` | Moves the folder. For every session whose `cwd` is inside the project, it moves the session file from `sessions/--<old cwd>--/` to `sessions/--<new cwd>--/` and rewrites the header `cwd` and any fork `parentSession` paths. Leaves no symlinks. |
 | `/project memory` | Opens `memory.md` in `$EDITOR`. |
 | `/project archive` / `restore` | Archived projects are hidden and read-only, and their sessions stay searchable. |
 | `/project delete` | Asks for confirmation, removes the folder and unlinks its sessions, which stay as plain chats. |
@@ -51,18 +51,20 @@ $PI_PROJECTS_DIR/
 
 ### Context injection
 
-When a session starts, the extension builds one stable block and adds it through `before_agent_start`. The block contains:
+`before_agent_start` receives pi's system prompt and returns it with a project section appended. Pi uses the returned prompt *in place of* its own for that turn, so the handler must append to it, never return a new one. The section contains:
 
 - the project name;
 - the layout rules (use the tools; files go in `artifacts/`);
 - the repos and worktrees found by scanning;
 - `memory.md`.
 
-The block stays byte-identical between turns, so the provider can serve it from the prompt cache. It is rebuilt only after `project_remember`, a clone or a worktree change.
+The section is built when the session starts and is cached in memory, so it is byte-identical every turn. pi-ai puts Anthropic's `cache_control` on the system block, so identical text is served from the prompt cache. The section is rebuilt only after `project_remember`, a clone or a worktree change, and each rebuild costs one cache miss.
+
+This follows pi's guidance (`docs/extensions.md`): change the prompt rather than inject messages. Messages returned from this hook are appended every turn and would pile up in history. A skill is not a substitute: pi shows the agent only a skill's description and loads the body on demand, so memory would not always be in context. Skills are for guidance. Facts the agent always needs go in the prompt.
 
 ### Skill
 
-A bundled skill explains when to save to memory (durable decisions, conventions, facts about the environment) and when to use a worktree versus the main checkout. Two `memory` settings in `project.json` adjust this:
+The package ships a skill through its `"pi": {"skills": [...]}` manifest. It explains when to save to memory (durable decisions, conventions, facts about the environment) and when to use a worktree versus the main checkout. Two `memory` settings in `project.json` adjust this:
 
 - **`memory.prompt`** replaces the skill's guidance.
 - **`memory.enabled: false`** turns off memory injection and `project_remember`.
@@ -75,11 +77,15 @@ Shows the current project.
 
 pi-sync, sandboxing, secrets, memory engines, the pi-web UI and workspaced. Moving a session to another project is also out.
 
+### Verified
+
+- **Resume after rename** works if the session files move along with the header rewrite. Pi finds sessions by a directory derived from `cwd`, both for listing a directory and for `--continue`. `/resume` searches all directories.
+- **Prompt caching**, as described under Context injection. This is confirmed from the code, not from a live request.
+- **No root manifest**, as described under Layout.
+
 ### Open checks
 
-- Does a resumed session work after its header `cwd` is rewritten?
-- Does a repeated `before_agent_start` system prompt get a cache hit?
-- Repo `AGENTS.md` files load only when the session's working directory is inside that repo. Decide whether the injected block should point to them.
+- Repo `AGENTS.md` files load only when the session's working directory is inside that repo. Decide whether the injected section should point to them.
 
 ## Phase 2: sandboxing and secrets (Gondolin)
 
