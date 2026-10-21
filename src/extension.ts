@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -172,21 +172,21 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(`Created project ${p.name} at ${p.path}`, "info");
 			await openProject(p, ctx);
 		},
-		async open(arg, ctx) {
-			const p = arg ? getProject(arg) : await pick(ctx, "active", "Open project");
-			if (p) await openProject(p, ctx);
-		},
 		async name(arg, ctx) {
 			const [a, b] = arg.split(/\s+/).filter(Boolean);
 			const p = b ? getProject(a) : current;
 			const newName = b ?? a ?? (await ctx.ui.input("New project name", p?.name ?? ""));
 			if (!p) throw new Error("Usage: /project name [project] <new-name>");
 			if (!newName) return;
-			if (isInside(ctx.cwd, p.path)) {
-				throw new Error(`This session runs inside ${p.name}. Run /project name ${p.name} ${newName} from a session outside the project.`);
-			}
-			const next = renameProject(p, newName);
-			ctx.ui.notify(`Renamed ${p.name} → ${next.name}`, "info");
+			const own = isInside(ctx.cwd, p.path) ? ctx.sessionManager.getSessionFile() : undefined;
+			// pi writes a session file only after the first message; write the header so it moves too.
+			if (own && !existsSync(own)) writeFileSync(own, `${JSON.stringify(ctx.sessionManager.getHeader())}\n`);
+			const { project: next, moved } = renameProject(p, newName);
+			const target = own && moved.get(own);
+			const msg = `Renamed ${p.name} → ${next.name}`;
+			// The command ctx is stale after a switch; use the one pi hands to withSession.
+			if (target) await ctx.switchSession(target, { withSession: async (c) => c.ui.notify(msg, "info") });
+			else ctx.ui.notify(msg, "info");
 		},
 		async memory(arg, ctx) {
 			const p = await target(arg, ctx);
@@ -215,11 +215,8 @@ export default function (pi: ExtensionAPI) {
 			if (!p) return;
 			if (isInside(ctx.cwd, p.path)) throw new Error(`This session runs inside ${p.name}. Delete it from outside the project.`);
 			const n = projectSessions(p).length;
-			const KEEP = `Delete project, keep ${n} session(s)`;
-			const ALL = `Delete project and its ${n} session(s)`;
-			const choice = await ctx.ui.select(`Delete ${p.name} and its folder ${p.path}?`, [KEEP, ALL, "Cancel"]);
-			if (choice !== KEEP && choice !== ALL) return;
-			deleteProject(p, { sessions: choice === ALL });
+			if (!(await ctx.ui.confirm("Delete project", `Delete ${p.name}, its folder and its ${n} session(s)? Use /project archive to keep them.`))) return;
+			deleteProject(p);
 			ctx.ui.notify(`Deleted ${p.name}`, "info");
 		},
 		async list(_arg, ctx) {

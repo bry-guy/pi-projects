@@ -47,7 +47,8 @@ test("rename moves sessions, rewrites cwd and parentSession", () => {
 	const f1 = writeSession(p.path, "s1");
 	writeSession(join(p.path, "repos", "r"), "s2", f1);
 	writeSession("/elsewhere", "s3", f1);
-	const next = s.renameProject(p, "new");
+	const { project: next, moved } = s.renameProject(p, "new");
+	assert.equal(moved.get(f1), join(s.sessionDirFor(next.path), "2026-01-01T00-00-00-000Z_s1.jsonl"));
 	assert.equal(next.name, "new");
 	assert.ok(!existsSync(p.path));
 	assert.equal(s.loadProject(next.path).name, "new");
@@ -72,16 +73,14 @@ test("archive blocks tools; restore re-enables", () => {
 	assert.match(s.readMemory(r), /- uses postgres 16\n$/);
 });
 
-test("delete keeps or removes sessions", () => {
+test("delete removes folder and sessions, leaves others", () => {
 	const p = s.createProject("del");
-	const f = writeSession(p.path, "s1");
-	s.deleteProject(p, { sessions: false });
+	const f = writeSession(join(p.path, "repos", "r"), "s1");
+	const other = writeSession("/elsewhere", "s2");
+	s.deleteProject(p);
 	assert.ok(!existsSync(p.path));
-	assert.ok(existsSync(f));
-	const q = s.createProject("del2");
-	const g = writeSession(q.path, "s2");
-	s.deleteProject(q, { sessions: true });
-	assert.ok(!existsSync(g));
+	assert.ok(!existsSync(f));
+	assert.ok(existsSync(other));
 });
 
 test("clone, worktree, scan and doctor", () => {

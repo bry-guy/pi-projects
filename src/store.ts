@@ -211,9 +211,9 @@ function rewriteHeader(from: string, to: string, header: SessionFile["header"]):
  * Rename a project: move its sessions to the new cwd-derived session dirs, rewrite
  * header cwd and parentSession links, then move the folder. Each step is idempotent.
  */
-export function renameProject(p: Project, newName: string): Project {
+export function renameProject(p: Project, newName: string): { project: Project; moved: Map<string, string> } {
 	const n = validateName(newName);
-	if (n === p.name) return p;
+	if (n === p.name) return { project: p, moved: new Map() };
 	const newPath = join(projectsDir(), n);
 	if (existsSync(newPath)) throw new Error(`Project "${n}" already exists.`);
 
@@ -238,11 +238,11 @@ export function renameProject(p: Project, newName: string): Project {
 	renameSync(p.path, newPath);
 	const next = { ...p, name: n, path: newPath };
 	saveProject(next);
-	return next;
+	return { project: next, moved };
 }
 
-export function deleteProject(p: Project, opts: { sessions: boolean }): void {
-	if (opts.sessions) for (const s of projectSessions(p)) rmSync(s.file, { force: true });
+export function deleteProject(p: Project): void {
+	for (const s of projectSessions(p)) rmSync(s.file, { force: true });
 	rmSync(p.path, { recursive: true, force: true });
 }
 
