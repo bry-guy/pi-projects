@@ -9,7 +9,7 @@ A **project** is a persistent workspace: sessions, repos, memory and scratch fil
 - **Code over prompts.** Structure (where repos and worktrees go) is enforced by tools. Skills cover judgment only.
 - **Each record has one owner.**
   - A session records its own project ID with `appendEntry`.
-  - The index fields listed below are caches that `doctor` can rebuild.
+  - Project membership is derived, never stored: a session belongs to the project when its header `cwd` is inside the project folder.
 
 ## Phase 1: local projects (current)
 
@@ -18,7 +18,7 @@ A **project** is a persistent workspace: sessions, repos, memory and scratch fil
 ```
 $PI_PROJECTS_DIR/
   <name>/
-    project.json           # id (uuid), name, state, memory{enabled, prompt}, sessions[]
+    project.json           # id (uuid), name, state, created, memory{enabled, prompt}
     memory.md
     repos/<repo>/
     worktrees/<repo>/<branch>/
@@ -27,7 +27,8 @@ $PI_PROJECTS_DIR/
 
 - **Folder name:** a project folder is named after the project's slug, and slugs are unique.
 - **ID:** the UUID in `project.json` is the real key. A local project needs no coordination with any other machine.
-- **Session list:** `sessions[]` is an index for quick lookup. The authority is the `appendEntry` link inside each session.
+- **Sessions:** there is no stored list. Membership comes from `SessionManager.listAll()`, filtered to sessions whose `cwd` is inside the project, so concurrent pi processes have no shared index to race on. Each session also records `appendEntry("pi-project", {projectId})`, which Phase 4 sync will use.
+- **Opening:** pi has no way to set a session's `cwd`. `/project` writes a header-only session file into the project's session directory with `SessionManager.create(projectDir)`, then calls `ctx.switchSession(file)`, which rebuilds tools at the new `cwd`.
 - **No root manifest.** Listing projects reads the root folder and each `project.json`, which is cheap at personal scale. Folder names already guarantee unique names, so an index would add nothing.
 - **Repo list:** there is none. Repos and worktrees are found by scanning `repos/` and `worktrees/`.
 
@@ -37,11 +38,11 @@ $PI_PROJECTS_DIR/
 |---|---|
 | `/project` | Picker. Open a project (starts a session in the project folder) or create one. Lists that project's sessions. |
 | `/project new <name>` | Creates the folder, `project.json` and an empty `memory.md`. |
-| `/project name <new>` | Moves the folder. For every session whose `cwd` is inside the project, it moves the session file from `sessions/--<old cwd>--/` to `sessions/--<new cwd>--/` and rewrites the header `cwd` and any fork `parentSession` paths. Leaves no symlinks. |
+| `/project name <new>` | Moves the folder. For every session whose `cwd` is inside the project, it moves the session file from `sessions/--<old cwd>--/` to `sessions/--<new cwd>--/` and rewrites the header `cwd` and any fork `parentSession` paths. Session moves happen before the folder move, and every step is idempotent, so a failed rename can be re-run. Leaves no symlinks. |
 | `/project memory` | Opens `memory.md` in `$EDITOR`. |
-| `/project archive` / `restore` | Archived projects are hidden and read-only, and their sessions stay searchable. |
-| `/project delete` | Asks for confirmation, removes the folder and unlinks its sessions, which stay as plain chats. |
-| `/project doctor [--fix]` | Reports stray root files, broken worktrees, sessions whose `cwd` is wrong, and index drift. `--fix` only rebuilds indexes. |
+| `/project archive` / `restore` | Archived projects are hidden from the picker. Our tools and `/project` refuse to work on them. The filesystem is not made read-only. Sessions stay listed in `/resume`. |
+| `/project delete` | Shows how many sessions the project has, and offers to keep them (the default), delete them too, or cancel. Removes the folder. Kept sessions point at a missing `cwd`, so pi asks for a directory when one is resumed. |
+| `/project doctor` | Reports stray root files, broken worktrees, sessions whose `cwd` no longer exists, and malformed `project.json`. Reports only. |
 
 ### Tools
 
@@ -51,7 +52,7 @@ $PI_PROJECTS_DIR/
 
 ### Context injection
 
-`before_agent_start` receives pi's system prompt and returns it with a project section appended. Pi uses the returned prompt *in place of* its own for that turn, so the handler must append to it, never return a new one. The section contains:
+`before_agent_start` sets `event.systemPromptOptions.sections["pi-project"]`. That is pi's recommended mechanism: it adds a section, never replaces the prompt, and composes with other extensions. The section contains:
 
 - the project name;
 - the layout rules (use the tools; files go in `artifacts/`);

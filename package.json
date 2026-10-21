@@ -1,0 +1,20 @@
+{
+  "name": "@bry-guy/pi-projects",
+  "version": "0.1.0",
+  "description": "Pi projects: persistent workspaces of sessions, repos, memory and artifacts",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "projects"],
+  "license": "MIT",
+  "files": ["src", "skills", "README.md", "docs"],
+  "pi": {
+    "extensions": ["./src/extension.ts"],
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
+  }
+}
