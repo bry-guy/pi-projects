@@ -36,12 +36,12 @@ $PI_PROJECTS_DIR/
 
 | Command | Behavior |
 |---|---|
-| `/project` | Picker. Open a project (starts a session in the project folder) or create one. Lists that project's sessions. |
+| `/project` | Picker. Pick a project, then start a new session in its folder or resume one of its sessions; or create a project. Existing sessions outside a project are never moved into one. There is no separate `/project open`. |
 | `/project new <name>` | Creates the folder, `project.json` and an empty `memory.md`. |
-| `/project name <new>` | Moves the folder. For every session whose `cwd` is inside the project, it moves the session file from `sessions/--<old cwd>--/` to `sessions/--<new cwd>--/` and rewrites the header `cwd` and any fork `parentSession` paths. Session moves happen before the folder move, and every step is idempotent, so a failed rename can be re-run. Leaves no symlinks. |
-| `/project memory` | Opens `memory.md` in `$EDITOR`. |
-| `/project archive` / `restore` | Archived projects are hidden from the picker. Our tools and `/project` refuse to work on them. The filesystem is not made read-only. Sessions stay listed in `/resume`. |
-| `/project delete` | Shows how many sessions the project has, and offers to keep them (the default), delete them too, or cancel. Removes the folder. Kept sessions point at a missing `cwd`, so pi asks for a directory when one is resumed. |
+| `/project name <new>` | Moves the folder. For every session whose `cwd` is inside the project, it moves the session file from `sessions/--<old cwd>--/` to `sessions/--<new cwd>--/` and rewrites the header `cwd` and any fork `parentSession` paths. Session moves happen before the folder move, and every step is idempotent, so a failed rename can be re-run. Works from inside the project: after the move, pi switches to the current session's moved file so the conversation continues at the new path (writing its header first if it is not on disk yet). Runs only while the agent is idle. Sessions open in other processes (e.g. pi-web) are not detected until Phase 5. Leaves no symlinks. |
+| `/project memory` | Edits `memory.md` in pi's editor dialog (`$EDITOR` would fight the TUI). |
+| `/project archive` / `restore` | Archived projects are hidden from the picker. Our tools and `/project` refuse to work on them. The filesystem is not made read-only. Keeps everything: folder and sessions stay, and sessions stay listed in `/resume`. |
+| `/project delete` | Removes the folder and all of the project's sessions, after one confirmation showing the session count. There is no keep-sessions option: archive is the way to keep data. Refused from inside the project. |
 | `/project doctor` | Reports stray root files, broken worktrees, sessions whose `cwd` no longer exists, and malformed `project.json`. Reports only. |
 
 ### Tools
