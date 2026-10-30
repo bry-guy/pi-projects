@@ -41,7 +41,7 @@ $PI_PROJECTS_DIR/            # one git repo: the state repo
   pull --rebase and retry once on rejection. On session start it pulls.
   Failure never blocks pi; it shows a notice.
 - P3 Session link. On the first turn in a project, append one custom entry
-  `{customType: "pi-projects", data: {id, name, rel}}` (`rel` = cwd relative
+  `{customType: "pi-project", data: {projectId, name, rel}}` (`rel` = cwd relative
   to the project folder). Custom entries survive pi-sync verbatim.
 - P4 `/project` session list labels sessions by name or first message.
 - P5 Update `docs/plan.md`: Phase 4 becomes the state repo, Phase 5 becomes

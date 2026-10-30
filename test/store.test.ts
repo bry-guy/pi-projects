@@ -100,3 +100,52 @@ test("clone, worktree, scan and doctor", () => {
 	assert.ok(issues.some((i) => i.includes("stray item at project root: stray.txt")));
 	assert.ok(issues.some((i) => i.includes("cwd no longer exists")));
 });
+
+test("clone records repos; missing repos are listed; remove forgets", () => {
+	const src = mkdtempSync(join(tmpdir(), "src-"));
+	execFileSync("git", ["init", "-q", "-b", "main", src]);
+	execFileSync("git", ["-C", src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+	const p = s.createProject("multi");
+	s.cloneRepo(p, src, "code");
+	const saved = s.loadProject(p.path);
+	assert.deepEqual(saved.repos, [{ name: "code", url: src, branch: "main" }]);
+	assert.equal(s.missingRepos(saved).length, 0);
+	s.removeRepo(saved, "code");
+	assert.equal(existsSync(join(p.path, "repos", "code")), false);
+	assert.deepEqual(s.loadProject(p.path).repos, []);
+});
+
+test("state repo: share, remember on two machines merges memory", async () => {
+	const remote = mkdtempSync(join(tmpdir(), "remote-"));
+	execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+	const env = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+	Object.assign(process.env, env);
+	const a = mkdtempSync(join(tmpdir(), "a-"));
+	const b = mkdtempSync(join(tmpdir(), "b-"));
+	process.env.PI_PROJECTS_DIR = a;
+	const pa = s.createProject("shared");
+	await s.shareState(remote);
+	process.env.PI_PROJECTS_DIR = b;
+	await s.shareState(remote);
+	const pb = s.getProject("shared");
+	s.remember(pb, "from b");
+	await s.pushState("b");
+	process.env.PI_PROJECTS_DIR = a;
+	s.remember(pa, "from a");
+	await s.pushState("a"); // rejected, rebases with union merge, retries
+	await s.pullState();
+	const mem = readFileSync(join(pa.path, "memory.md"), "utf8");
+	assert.match(mem, /from a/);
+	assert.match(mem, /from b/);
+	assert.equal(existsSync(join(a, ".gitignore")), true);
+});
+
+test("sessionTitle prefers name, then first user message", () => {
+	const p = s.createProject("titles");
+	const file = writeSession(p.path, "t1");
+	assert.match(s.sessionTitle(file), /t1\.jsonl$/);
+	writeFileSync(file, readFileSync(file, "utf8") + `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "hello there" }] } })}\n`);
+	assert.equal(s.sessionTitle(file), "hello there");
+	writeFileSync(file, readFileSync(file, "utf8") + `${JSON.stringify({ type: "session_info", name: "Named" })}\n`);
+	assert.equal(s.sessionTitle(file), "Named");
+});

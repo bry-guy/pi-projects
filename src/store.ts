@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	closeSync,
@@ -26,8 +26,16 @@ export interface Project {
 	state: ProjectState;
 	created: string;
 	memory: { enabled: boolean; prompt?: string };
+	/** Repos this project uses; re-cloned into repos/<name> on any machine. */
+	repos?: RepoRef[];
 	/** Absolute project folder; not persisted. */
 	path: string;
+}
+
+export interface RepoRef {
+	name: string;
+	url: string;
+	branch?: string;
 }
 
 export const SUBDIRS = ["repos", "worktrees", "artifacts"] as const;
@@ -74,7 +82,7 @@ function writeJsonAtomic(file: string, data: unknown): void {
 	renameSync(tmp, file);
 }
 
-function saveProject(p: Project): void {
+export function saveProject(p: Project): void {
 	const { path, ...data } = p;
 	writeJsonAtomic(join(path, "project.json"), data);
 }
@@ -196,6 +204,25 @@ export function projectSessions(p: Project): SessionFile[] {
 	return allSessionFiles().filter((s) => s.header.cwd && isInside(s.header.cwd, p.path));
 }
 
+/** Display title: latest session name, else the first user message, else the file name. */
+export function sessionTitle(file: string): string {
+	let name: string | undefined;
+	let first: string | undefined;
+	for (const line of readFileSync(file, "utf8").split("\n")) {
+		if (!line.includes('"session_info"') && (first || !line.includes('"user"'))) continue;
+		try {
+			const e = JSON.parse(line);
+			if (e.type === "session_info" && e.name) name = e.name;
+			else if (!first && e.type === "message" && e.message?.role === "user") {
+				const c = e.message.content;
+				const t = typeof c === "string" ? c : c?.find?.((x: any) => x.type === "text")?.text;
+				if (t) first = t.replace(/\s+/g, " ").trim().slice(0, 60);
+			}
+		} catch {}
+	}
+	return name ?? first ?? basename(file);
+}
+
 function rewriteHeader(from: string, to: string, header: SessionFile["header"]): void {
 	const text = readFileSync(from, "utf8");
 	const i = text.indexOf("\n");
@@ -285,7 +312,148 @@ export function cloneRepo(p: Project, url: string, name?: string): string {
 	const dest = join(p.path, "repos", n);
 	if (existsSync(dest)) throw new Error(`repos/${n} already exists.`);
 	git(["clone", url, dest]);
+	let branch: string | undefined;
+	try {
+		branch = git(["symbolic-ref", "--short", "HEAD"], dest);
+	} catch {
+		// detached or empty repo
+	}
+	addRepoRef(p, { name: n, url, branch });
 	return dest;
+}
+
+function addRepoRef(p: Project, ref: RepoRef): void {
+	const fresh = loadProject(p.path);
+	fresh.repos = [...(fresh.repos ?? []).filter((r) => r.name !== ref.name), ref];
+	saveProject(fresh);
+	p.repos = fresh.repos;
+}
+
+/** Record repos cloned before project.json tracked them (or by hand). Returns how many were added. */
+export function recordExistingRepos(p: Project): number {
+	const known = new Set((p.repos ?? []).map((r) => r.name));
+	let added = 0;
+	for (const name of dirs(join(p.path, "repos"))) {
+		if (known.has(name) || !existsSync(join(p.path, "repos", name, ".git"))) continue;
+		let url: string;
+		try {
+			url = git(["remote", "get-url", "origin"], join(p.path, "repos", name));
+		} catch {
+			continue; // no remote: cannot be re-cloned elsewhere
+		}
+		let branch: string | undefined;
+		try {
+			branch = git(["symbolic-ref", "--short", "HEAD"], join(p.path, "repos", name));
+		} catch {}
+		addRepoRef(p, { name, url, branch });
+		added++;
+	}
+	return added;
+}
+
+/** Repos listed in project.json but not cloned here. */
+export function missingRepos(p: Project): RepoRef[] {
+	return (p.repos ?? []).filter((r) => !existsSync(join(p.path, "repos", r.name)));
+}
+
+/** Clone one listed repo without blocking the caller. */
+export function cloneMissing(p: Project, ref: RepoRef): Promise<string> {
+	const dest = join(p.path, "repos", ref.name);
+	const args = ["clone", ...(ref.branch ? ["--branch", ref.branch] : []), ref.url, dest];
+	return run("git", args).then(() => dest);
+}
+
+/** Forget a repo and delete its clone. Worktrees of it must be removed first. */
+export function removeRepo(p: Project, name: string): void {
+	assertActive(p);
+	if (dirs(join(p.path, "worktrees", name)).length) throw new Error(`repos/${name} still has worktrees under worktrees/${name}.`);
+	rmSync(join(p.path, "repos", name), { recursive: true, force: true });
+	const fresh = loadProject(p.path);
+	fresh.repos = (fresh.repos ?? []).filter((r) => r.name !== name);
+	saveProject(fresh);
+	p.repos = fresh.repos;
+}
+
+function run(cmd: string, args: string[], cwd?: string): Promise<string> {
+	return new Promise((res, rej) =>
+		execFile(cmd, args, { cwd, encoding: "utf8" }, (err, stdout, stderr) =>
+			err ? rej(new Error(stderr.trim().split("\n").at(-1) || err.message)) : res(stdout.trim()),
+		),
+	);
+}
+
+// ---------- state repo: PI_PROJECTS_DIR as one git repo of project.json + memory.md ----------
+
+export const STATE_IGNORE = "*/repos/\n*/worktrees/\n*/artifacts/\n*.tmp\n";
+export const STATE_ATTRIBUTES = "*/memory.md merge=union\n";
+
+export function isStateRepo(): boolean {
+	return existsSync(join(projectsDir(), ".git"));
+}
+
+/**
+ * Make PI_PROJECTS_DIR a git repo synced with `remote`. Local projects are
+ * committed first; an existing remote history is merged in (memory.md merges by union).
+ */
+export async function shareState(remote: string): Promise<string> {
+	const root = projectsDir();
+	mkdirSync(root, { recursive: true });
+	const g = (...a: string[]) => run("git", a, root);
+	if (!isStateRepo()) await g("init", "-q", "-b", "main");
+	writeFileSync(join(root, ".gitignore"), STATE_IGNORE);
+	writeFileSync(join(root, ".gitattributes"), STATE_ATTRIBUTES);
+	const remotes = (await g("remote")).split("\n");
+	await (remotes.includes("origin") ? g("remote", "set-url", "origin", remote) : g("remote", "add", "origin", remote));
+	await commitAll("pi-projects: share");
+	await g("fetch", "-q", "origin");
+	const hasRemote = await g("ls-remote", "--heads", "origin", "main").then((o) => o !== "");
+	if (hasRemote) await g("pull", "-q", "--no-rebase", "--no-edit", "--allow-unrelated-histories", "origin", "main");
+	await g("push", "-q", "-u", "origin", "main");
+	return root;
+}
+
+async function commitAll(message: string): Promise<boolean> {
+	const root = projectsDir();
+	await run("git", ["add", "-A"], root);
+	const staged = await run("git", ["diff", "--cached", "--name-only"], root);
+	if (!staged) return false;
+	await run("git", ["-c", "user.name=pi-projects", "-c", "user.email=pi-projects@localhost", "commit", "-q", "-m", message], root);
+	return true;
+}
+
+let chain: Promise<unknown> = Promise.resolve();
+/** Serialize state-repo git work inside this process. */
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+	const next = chain.then(fn, fn);
+	chain = next.catch(() => {});
+	return next;
+}
+
+/** Commit project changes and push; on rejection pull (rebase) and retry once. No-op without a state repo. */
+export function pushState(message: string): Promise<void> {
+	if (!isStateRepo()) return Promise.resolve();
+	const root = projectsDir();
+	return serial(async () => {
+		await commitAll(message);
+		const ahead = await run("git", ["rev-list", "--count", "@{upstream}..HEAD"], root).catch(() => "1");
+		if (ahead === "0") return;
+		try {
+			await run("git", ["push", "-q"], root);
+		} catch {
+			await run("git", ["pull", "-q", "--rebase"], root);
+			await run("git", ["push", "-q"], root);
+		}
+	});
+}
+
+/** Fetch other machines' project changes. No-op without a state repo. */
+export function pullState(): Promise<void> {
+	if (!isStateRepo()) return Promise.resolve();
+	const root = projectsDir();
+	return serial(async () => {
+		await commitAll("pi-projects: local changes");
+		await run("git", ["pull", "-q", "--rebase"], root);
+	});
 }
 
 export function addWorktree(p: Project, repo: string, branch: string): string {
