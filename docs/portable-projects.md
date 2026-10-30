@@ -4,6 +4,38 @@ Goal: **My Pi, everywhere I work.** A project (its memory, its repo list, its
 sessions) is the same on the laptop, on another laptop, and in pi-web, and a
 session always opens inside its project.
 
+## Status (2026-10-30)
+
+Done and pushed:
+- pi-projects `ca45400`, `e327a51`: `repos[]` in project.json (clone records,
+  missing repos clone on session start, `/project repos [remove <name>]`),
+  state repo (`/project share <remote>`, commit+push after changes, background
+  pull on start), `pi-project` link entry `{projectId, name, rel}`, titled
+  session list. Docs `dc6172e`.
+- State repo: private `bry-guy/pi-projects-state`; the laptop's
+  `~/.pi/agent/pi-projects` is shared to it.
+- pi-sync `96f84ea` on main (deployed): S1 background enroll + lease fix, S2
+  arrival in the project folder (file goes in that folder's sessions dir),
+  S3 no code sharing from the state repo, S4 parentSession kept, S5 optional
+  `project` on envelope/list/append (server + client).
+- pi-background `bc880e8`, public `bry-guy/pi-background`, installed from
+  git: B1, B2 (snapshot on connect, tested), B3 (early-exit notice, untested).
+
+Pod wake measured on `ws-pi-projects` (k3s, read-only): scheduled → sandbox
+ready 3 s, prestart ~0.1 s, server listening +0.2 s, prewarm 1.3 s, ready ~2 s
+after container start. Image is already `IfNotPresent`. So a clean wake is
+about 5–6 s; the slow wake seen that day (6 min) was two container crashes
+(exit 139, segfault) before the third start succeeded. W6: skip-dotfiles and
+image items are not needed; wake-on-open exists (sidebar); investigate the
+exit-139 crashes instead.
+
+Remaining: W (pi-web), on branch `portable-projects` in pi-web, slices W-a
+(worker server multi-repo project), W-b (UI modal + switchers), W-c
+(workspaced keyed by project; prestart sparse-clones the state repo, needs the
+worker's GitHub token to read `pi-projects-state`; bump `PI_SYNC_COMMIT`),
+W-d (home = workers; other-device sessions filtered by `project`).
+Do not push pi-web `main` without the user's go-ahead: it deploys.
+
 ## Rules
 
 1. One writer per session: pi-background's lock on a machine, pi-sync's lease
