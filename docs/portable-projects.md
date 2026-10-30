@@ -50,8 +50,8 @@ no native addons in the image, so suspect node/runtime; capture
 - Not yet verified on the cluster: creating a project worker from the UI
   (sparse clone of the private state repo needs git credentials in the pod),
   and laptop sessions listing in its Project menu.
-- W4 gap: web home does not list state-repo projects that have no worker
-  yet; open one by typing its name in New project.
+- W4 gap: web home does not list projects that have no worker yet; open one
+  by typing its name in New project. Fix = S6 + W7 below.
 
 ## Rules
 
@@ -142,6 +142,22 @@ $PI_PROJECTS_DIR/            # one git repo: the state repo
   checkout. Server: per-repo git/worktree routes take `{project, repo}`;
   `worktreeRoot = <project>/worktrees` so worktrees land at
   `worktrees/<repo>/<branch>` (check `slug(branch)`).
+- S6 pi-sync server `GET /v1/projects` → `[{name, lastActive, sessions}]`,
+  derived from session metadata `project` (S5; `internal/api/api.go:588`),
+  no new storage. Also add a `project` query filter to `GET /v1/sessions`
+  (today only `repository`, `api.go:550-563`; pi-web filters client-side).
+  The server is single-user and unauthenticated (`api.go:41-68`), so the
+  list is global; fine while pi-sync stays private to the cluster/tailnet.
+- W7 pi-ez-web home lists projects from S6 (it already has
+  `PI_SYNC_SERVER_URL`, `deploy/k8s/web/deployment.yaml:185-189`) merged with
+  workers (awake/asleep). The front end caches each worker's last Project
+  menu response opaquely (no interpretation) and shows it at once, marked
+  updating, while it wakes or creates the worker. Today `/projects/:id/*` is
+  forwarded to the owning worker and 404s without one
+  (`server/remote-workspaces.js:520-525`), so a project with no worker
+  needs a front-end route that creates it on open. The front end never
+  reads the state repo. Limit: a project appears after its first synced
+  session.
 - W6 Faster wake (measure first: `kubectl get events` + pod log for one
   wake, to see time per step):
   - wake the pod when the Project modal opens, not when a session opens
