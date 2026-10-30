@@ -106,22 +106,16 @@ pi-sync, sandboxing, secrets, memory engines, the pi-web UI and workspaced. Movi
 - **Research first:** look for existing cross-session consolidation with provenance. Candidates are Mastra's observational memory, Letta/MemGPT, Mem0, Zep/Graphiti, A-MEM, and the reflection step from Generative Agents.
 - **Direction:** a project with memory, secrets and a background worker is the home for a future agent.
 
-## Phase 4: cross-machine sharing (pi-sync)
+## Phase 4: cross-machine sharing (done; see portable-projects.md)
 
-- **Machine-local by default.** pi-sync is needed only for projects shared across machines.
-- **Server:** pi-sync gains a `/v1/projects/<id>` document, using the same ETag compare-and-swap and leases as sessions. It also gains a name index.
-- **Name collisions:** sharing a project whose name is already taken under another ID returns 409. The client refuses it and tells the user to run `/project name`.
-- **Repos:** each repo is recorded as a pi-sync workspace pointer `{gitRemote, branch, upstream commit}`. Opening a project on another machine runs pi-sync's `planCode`/`arriveCode` logic for each repo: clone if missing, fast-forward when it's safe, otherwise ask. This may require exporting those functions from pi-sync.
-- **pi-sync changes:** pi-sync currently reconciles git state from the session's working directory. The project root is not a repo, so pi-sync needs project awareness.
+- **Projects:** `PI_PROJECTS_DIR` is one git repo (`/project share <remote>`) tracking `project.json` and `memory.md` of every project; `repos/`, `worktrees/` and `artifacts/` are ignored. pi-projects commits and pushes after each project change and pulls on session start. `memory.md` merges by union.
+- **Repos:** `project.json` lists `repos: [{name, url, branch}]`; missing repos are cloned when a session opens the project.
+- **Sessions:** each session records its project in a `pi-project` custom entry `{projectId, name, rel}`. pi-sync reopens it in the same project folder on another machine and sends the project name to the server for listing.
+- Replaced the earlier `/v1/projects/<id>` design: git already does versioned text sync.
 
 ## Phase 5: pi-web and workspaced
 
-- **pi-web:** becomes a client of the store.
-  - Migrate `config.json projects[]` and `bindings.json` into it.
-  - UI: a scope switcher (Chats or an open project), a project home, an archive view.
-- **workspaced:** provisions a worker for a project when its sessions wake. It mounts the project volume at `PI_PROJECTS_DIR` and installs the package as usual.
-  - Grants and secrets become per project, not per repo.
-- **Docs:** fix pi-web drift. `design/revision-2/ARCHITECTURE.md` mentions `projects.json` and claims that closing a session removes its worktree.
+See `portable-projects.md` (W1–W6). In short: one PVC per project, workers keyed by project, pods sleep and wake under the max-awake cap (busy pods never sleep). The project is the trust boundary: one project per pod at a time. pi-web's project is the pi-projects project; the Project modal lists repos (add, delete, worktrees) and the project's sessions; the code viewer switches repo and branch.
 
 ## Phase 6: lifecycle UI
 
