@@ -50,8 +50,16 @@ no native addons in the image, so suspect node/runtime; capture
 - Not yet verified on the cluster: creating a project worker from the UI
   (sparse clone of the private state repo needs git credentials in the pod),
   and laptop sessions listing in its Project menu.
-- W4 gap: web home does not list projects that have no worker yet; open one
-  by typing its name in New project. Fix = S6 + W7 below.
+- S6 done: pi-sync `335c4ca` (deployed) adds `GET /v1/projects` and
+  `?project=` on `/v1/sessions`.
+- W7 built: pi-web `1c3ea89` on `portable-projects`, live on preview (UI only;
+  preview's `/api` is production, so the new listing needs main). Web lists
+  pi-sync projects without a worker, shows their other-device conversations
+  from pi-sync (no worker), "Open on the web" or opening a conversation
+  creates the worker; opening the Project menu wakes a sleeping worker.
+- Gap: sessions get a `project` on pi-sync only after pi-projects writes the
+  named link (session start with pi-projects >= ca45400) and the next push;
+  on 2026-10-30 none of 88 synced sessions had one yet.
 
 ## Rules
 
