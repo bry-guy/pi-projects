@@ -93,6 +93,16 @@ $PI_PROJECTS_DIR/            # one git repo: the state repo
   checkout. Server: per-repo git/worktree routes take `{project, repo}`;
   `worktreeRoot = <project>/worktrees` so worktrees land at
   `worktrees/<repo>/<branch>` (check `slug(branch)`).
+- W6 Faster wake (measure first: `kubectl get events` + pod log for one
+  wake, to see time per step):
+  - wake the pod when the Project modal opens, not when a session opens
+    (the modal renders from the state repo and pi-sync server, no pod);
+  - prestart skips the yadm update when the dotfiles commit is unchanged,
+    and reinstalls pi packages only when settings.json changed (the
+    project PVC keeps them);
+  - `imagePullPolicy: IfNotPresent` and pre-pull the image on nodes;
+  - one warm spare pod that can adopt any project (only if the above is
+    not enough).
 - W4 Web home lists projects (needs state-repo access on the web front end,
   medium) and their sessions (pi-sync server list, filtered by project, S5).
   Opening one wakes that project's pod and runs `/sync open` (today:
@@ -105,7 +115,7 @@ $PI_PROJECTS_DIR/            # one git repo: the state repo
 2. P2 + S3 (state repo) — dogfood laptop↔laptop.
 3. S2 + S5 — synced sessions open in their project and list under it.
 4. W1, W2, W3 — project pods. W4 last.
-5. B2, B3, P4 polish.
+5. B2, B3, P4 polish; W6 (wake on modal open lands with W4).
 
 ## Final UX
 
