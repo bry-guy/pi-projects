@@ -29,8 +29,12 @@ about 5–6 s; the slow wake seen that day (6 min) was two container crashes
 image items are not needed; wake-on-open exists (sidebar); investigate the
 exit-139 crashes instead.
 
-pi-web, branch `portable-projects` (also pushed as `feature/portable-projects`
-for the preview image), not on main:
+pi-web `portable-projects`, rebased and merged to main as `e7cb2fe`
+(2026-10-30); CI deployed preview and production, Argo synced, existing
+repo-keyed workers restarted with 0 restarts. 331 tests + DOM gate pass.
+exit-139: evidence gone after the rollout (pods replaced, events expired);
+no native addons in the image, so suspect node/runtime; capture
+`logs --previous` and node on the next occurrence.
 - W-a: with `PI_PROJECTS_DIR`, each repo in a project's `project.json` is a
   pi-web project (`id pp-<project>-<repo>`, `group`), worktrees in
   `<project>/worktrees/<repo>/`, root-folder sessions listed under the first
@@ -43,9 +47,11 @@ for the preview image), not on main:
   project from `PI_PROJECTS_STATE_REMOTE` (added to workspace-env ConfigMap)
   or creates it. New project in the UI asks for a name.
 - Dotfiles: pi-projects and pi-background install from git (yadm 0218806).
-- Not yet verified on the cluster: merge to main deploys production (the
-  preview environment is UI-only, so it cannot exercise the server changes).
-  Existing repo-keyed workers keep working unchanged.
+- Not yet verified on the cluster: creating a project worker from the UI
+  (sparse clone of the private state repo needs git credentials in the pod),
+  and laptop sessions listing in its Project menu.
+- W4 gap: web home does not list state-repo projects that have no worker
+  yet; open one by typing its name in New project.
 
 ## Rules
 
