@@ -1,0 +1,132 @@
+# Portable Projects — plan across repos
+
+Goal: **My Pi, everywhere I work.** A project (its memory, its repo list, its
+sessions) is the same on the laptop, on another laptop, and in pi-web, and a
+session always opens inside its project.
+
+## Rules
+
+1. One writer per session: pi-background's lock on a machine, pi-sync's lease
+   across machines.
+2. pi-web's worker REST/SSE API is how clients attach to a session a worker
+   runs.
+3. A session changes machine only between turns.
+4. pi-sync owns only session logs and leases. Code moves through git (each
+   repo's remote). Project state moves through git (one state repo).
+5. The trust boundary is the project. A worker pod serves one project at a
+   time; pods sleep and wake, project disks persist.
+
+## Project shape
+
+```text
+$PI_PROJECTS_DIR/            # one git repo: the state repo
+  .gitignore                 # */repos/  */worktrees/  */artifacts/
+  .gitattributes             # */memory.md merge=union
+  <name>/
+    project.json             # {id, name, repos: [{name, url, branch}]}
+    memory.md
+    repos/<repo>/            # re-cloned from project.json, not tracked
+    worktrees/<repo>/<branch>/
+    artifacts/               # local scratch, never synced
+```
+
+## Changes
+
+### pi-projects
+- P1 `project.json` gains `repos[]`. `project_clone` records the repo. On
+  session start, missing repos are cloned (in the background, with a notice).
+- P2 State repo. `/project share <remote>` (one time) turns `PI_PROJECTS_DIR`
+  into a git repo with the ignore and union-merge files. After any project
+  change (remember, clone, rename, new) pi-projects commits and pushes,
+  pull --rebase and retry once on rejection. On session start it pulls.
+  Failure never blocks pi; it shows a notice.
+- P3 Session link. On the first turn in a project, append one custom entry
+  `{customType: "pi-projects", data: {id, name, rel}}` (`rel` = cwd relative
+  to the project folder). Custom entries survive pi-sync verbatim.
+- P4 `/project` session list labels sessions by name or first message.
+- P5 Update `docs/plan.md`: Phase 4 becomes the state repo, Phase 5 becomes
+  project disks with a pool of pods.
+
+### pi-sync
+- S1 Merge `bg-enroll-lease` (f5661d6): background sessions enroll and hold
+  the lease; session_start no longer drops another local process's lease.
+- S2 Arrival: when materializing a session that has a `pi-projects` entry,
+  write it with `cwd = $PI_PROJECTS_DIR/<name>/<rel>` instead of `ctx.cwd`
+  (create the folder if missing). Without the entry, behavior is unchanged.
+- S3 Skip code sync when the cwd's git toplevel is `PI_PROJECTS_DIR` (the
+  state repo). pi-projects owns that repo; pi-sync must not push WIP
+  snapshots into it.
+- S4 Keep `parentSession` on materialize (currently dropped,
+  adapter.ts:97).
+- S5 Optional `project` (name) on the session envelope and server list,
+  set from the pi-projects entry, with a list filter. Needed because the
+  default session cwd is the project root, which has no code workspace
+  pointer, so grouping by repo URL would miss most sessions.
+
+### pi-background
+- B1 Create github.com/bry-guy/pi-background, push, reinstall from git.
+- B2 On watcher connect, send the in-progress message and running tool first.
+- B3 Report runners that die before writing a run record.
+
+### pi-web / workspaced
+- W1 workspaced keys a worker by **project name**, not repo. One PVC per
+  project mounted at `PI_PROJECTS_DIR=/data/projects`. Prestart: sparse clone
+  of the state repo with only `<name>/` (needs git credentials in the pod;
+  pi-web already has `git-credential-helper.js`), then pi-projects clones the
+  repos. Today prestart is only dotfiles (`workspace-env.yaml:16-53`); the
+  startup probe allows ~300s (`manifests.js:78-80`).
+  Sleep/wake/max-awake/busy rules stay as they are.
+- W2 Workers load pi-projects (via the dotfiles settings layer).
+- W3 pi-web's project becomes the pi-projects project (folder + project.json)
+  instead of `{id, name, repoPath}`. The existing Project menu
+  (`public/js/project-menu.js`: sessions, past sessions, other devices,
+  worker, removal) becomes the Project modal:
+  - shown by project name;
+  - Repos: list, add (reuse `repo-picker.js`, records in project.json),
+    delete; each repo shows its worktrees;
+  - Sessions: all sessions whose cwd is inside the project (historical),
+    plus other devices' sessions (S5); open one, or New session (cwd =
+    project root by default, or pick repo + branch for a worktree);
+  - open sessions stay what they are today: the live ones in the sidebar.
+  Code viewer (`files.js`) gets a repo switcher and a branch switcher; the
+  branch switcher picks an existing checkout/worktree, it does not run git
+  checkout. Server: per-repo git/worktree routes take `{project, repo}`;
+  `worktreeRoot = <project>/worktrees` so worktrees land at
+  `worktrees/<repo>/<branch>` (check `slug(branch)`).
+- W4 Web home lists projects (needs state-repo access on the web front end,
+  medium) and their sessions (pi-sync server list, filtered by project, S5).
+  Opening one wakes that project's pod and runs `/sync open` (today:
+  temp session at `context.path` + `/sync open <id>`,
+  `server/routes/projects.js:208-213`); S2 puts it in the right folder.
+
+## Order
+
+1. P1, P3, S1, S4, B1 (small, independent).
+2. P2 + S3 (state repo) — dogfood laptop↔laptop.
+3. S2 + S5 — synced sessions open in their project and list under it.
+4. W1, W2, W3 — project pods. W4 last.
+5. B2, B3, P4 polish.
+
+## Final UX
+
+- Laptop: `/project` as today. Cloning a repo records it; remembering a fact
+  commits and pushes it. `/bg`, switching mid-turn, and `/resume` to watch work
+  as now.
+- Another machine: pull a session (pi-sync) and it opens in the same project
+  folder, with memory already there and repos cloned on first use.
+- Web: home shows projects. Opening a project wakes its pod (seconds); its
+  sessions, including laptop ones, are listed; opening one runs it in the
+  project. Up to N pods awake; busy pods never sleep.
+- One writer always: opening a session busy elsewhere shows "running on X"
+  with take over.
+
+## Open checks
+- S2 writes header cwd = project folder, but the file lands in the per-cwd
+  sessions dir of `ctx.cwd` (`chat-transfer.js:12`). Verify pi-web
+  `listSessions(cwd)` and pi `/resume` still find it (pi-projects scans
+  header cwd, so it is fine).
+- pi-sync code refs (S2–S4) come from an earlier read; re-check on the
+  current pi-sync before building.
+- pi-web `slug(branch)` vs pi-projects worktree folder naming.
+- Where pi-web's web home lists synced sessions from today (worker or server).
+- Pod warm-start time on k3s.
