@@ -29,12 +29,23 @@ about 5–6 s; the slow wake seen that day (6 min) was two container crashes
 image items are not needed; wake-on-open exists (sidebar); investigate the
 exit-139 crashes instead.
 
-Remaining: W (pi-web), on branch `portable-projects` in pi-web, slices W-a
-(worker server multi-repo project), W-b (UI modal + switchers), W-c
-(workspaced keyed by project; prestart sparse-clones the state repo, needs the
-worker's GitHub token to read `pi-projects-state`; bump `PI_SYNC_COMMIT`),
-W-d (home = workers; other-device sessions filtered by `project`).
-Do not push pi-web `main` without the user's go-ahead: it deploys.
+pi-web, branch `portable-projects` (also pushed as `feature/portable-projects`
+for the preview image), not on main:
+- W-a: with `PI_PROJECTS_DIR`, each repo in a project's `project.json` is a
+  pi-web project (`id pp-<project>-<repo>`, `group`), worktrees in
+  `<project>/worktrees/<repo>/`, root-folder sessions listed under the first
+  repo, add/remove repo edits project.json and pushes the state repo.
+- W-b: sidebar shows one entry per pi project; Project menu lists repos
+  (add/remove, worktrees), sessions, past, other devices (pi-sync `project`
+  filter); files pane has repo and branch switchers (no git checkout).
+- W-c: `POST /v1/workspaces {project}` makes worker `ws-<project>` with
+  `PI_PROJECTS_DIR=/data/projects`, `PI_WEB_PROJECT`; it sparse-clones its
+  project from `PI_PROJECTS_STATE_REMOTE` (added to workspace-env ConfigMap)
+  or creates it. New project in the UI asks for a name.
+- Dotfiles: pi-projects and pi-background install from git (yadm 0218806).
+- Not yet verified on the cluster: merge to main deploys production (the
+  preview environment is UI-only, so it cannot exercise the server changes).
+  Existing repo-keyed workers keep working unchanged.
 
 ## Rules
 
