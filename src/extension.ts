@@ -104,15 +104,20 @@ export default function (pi: ExtensionAPI) {
 		return current;
 	};
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		ui = ctx.ui;
 		refresh(ctx);
-		if (isStateRepo()) {
-			// Pull other machines' memory and repo list before the first turn.
-			await pullState().catch((err) => ctx.ui.notify(`pi-projects: could not pull projects (${err.message})`, "warning"));
-			refresh(ctx);
-		}
 		if (!current) return;
+		if (isStateRepo()) {
+			// Pull other machines' memory and repo list without delaying the start; reload when it lands.
+			pullState()
+				.then(() => {
+					if (ui !== ctx.ui) return; // session replaced meanwhile
+					refresh(ctx);
+					if (current) ensureRepos(current, ctx);
+				})
+				.catch((err) => ui?.notify(`pi-projects: could not pull projects (${err.message})`, "warning"));
+		}
 		if (current.state === "active" && recordExistingRepos(current) > 0) sync(`${current.name}: record repos`);
 		ensureRepos(current, ctx);
 		// Link the session to its project; pi-sync reads this to reopen it in the same folder elsewhere.

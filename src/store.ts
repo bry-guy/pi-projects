@@ -376,7 +376,8 @@ export function removeRepo(p: Project, name: string): void {
 
 function run(cmd: string, args: string[], cwd?: string): Promise<string> {
 	return new Promise((res, rej) =>
-		execFile(cmd, args, { cwd, encoding: "utf8" }, (err, stdout, stderr) =>
+		// Never prompt for credentials and never hang a pi start on a dead network.
+		execFile(cmd, args, { cwd, encoding: "utf8", timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
 			err ? rej(new Error(stderr.trim().split("\n").at(-1) || err.message)) : res(stdout.trim()),
 		),
 	);
