@@ -12,7 +12,7 @@ Status: design, not built.
 
 - **Repos define roles.** Repos are permanent, so a role lives with its repo in `.pi/roles/<role>.yaml`. A role lists egress hosts, secret names (not values) and broker actions.
 - **Projects grant roles.** A project is a short-lived grouping of repos for a goal. Its `project.json` lists which repo roles its agents may take on.
-- **One role per session.** Roles don't compose. The project agent (the one you talk to) runs as `roles.default` from `project.json`, which can be any granted role. With no default it runs with no role: no role secrets and no role egress. To do another role's work it starts an agent as that role, with the task. That agent has its own VM or pod, egress and secrets, and reports back as text.
+- **One role per session.** Roles don't compose. The project agent (the one you talk to) runs as `roles.default` from `project.json`, which can be any granted role. With no default it runs sandboxed with no grants: a VM or pod with no role secrets and no role egress. To do another role's work it starts an agent as that role, with the task. That agent has its own VM or pod, egress and secrets, and reports back as text.
 - **No prompts for granted work.** Granting a role to a project is the decision. Anything the role allows runs without asking.
 - **Admin work is out of scope for now.** Agents propose admin commands and Bryan runs them.
 
@@ -111,13 +111,19 @@ On the Mac a sleeping laptop can pause a run; pi-keepalive helps.
 
 ### Stall watchdog
 
-Two layers, the same on the Mac and in pods:
+Two questions, answered in two places:
 
-- **Inside pi: a small extension in every role run.** It records the time of the last activity: model output streaming (`message_update`), tool output (`tool_execution_update`), and turn ends. It writes that time to a heartbeat file every few seconds. If activity stops for the limit, it aborts the current step (`ctx.abort()`), records "stalled" with the last tool that was running, and shuts pi down (`ctx.shutdown()`). This catches a hung tool or a stuck model call while pi itself still works.
-- **Outside pi: the runner watches the heartbeat file.** It catches pi itself hanging or crashing, when the extension can't act.
-  - **Mac:** `role_agent` spawned the child `pi` process and watches the file. If it goes stale, it stops the process (SIGTERM, then SIGKILL) and runs the close steps itself.
-  - **k3s:** a liveness probe checks the file's age. If it goes stale, Kubernetes stops the container. The Job's wrapper traps the stop signal and runs the close steps within the termination grace period. The Job does not retry (`backoffLimit: 0`), so a stalled run ends as failed with its state saved.
-- **Known limit:** a tool that is working but prints nothing for longer than the limit (a quiet build) looks stalled. Tools should print progress, or the limit should be generous.
+- **Is the agent making progress?** Answered inside pi, where the tool, its command and its output are visible.
+  - **Tool calls: [pi-hang-guard](https://github.com/ducaoya/pi-hang-guard)** (npm, MIT, v0.3.6). It measures silence, not run time: a `bash` command that keeps printing is never stalled. Known-slow commands get higher limits through a configurable list, and a command with an explicit bound (`timeout 3600 gh run watch`) is measured against that bound instead. In `guard` mode it aborts a stuck call and gives the model a report so it can change approach. Configured in `hang-guard.json` (`PI_GUARD_CONFIG`); role runs need `mode: guard` and `resumeWithoutUI: true`.
+  - **Model calls:** a provider stream that stalls is handled by a retry extension such as `@narumitw/pi-retry`.
+  - **Long waits such as CI:** the agent uses a command that prints while it waits (`gh run watch`), adds those commands to the slow list, or wraps the wait in `timeout <bound>`. The skill for role runs says so.
+- **Is pi alive?** Answered outside pi, by a small configurable **pi-watchdog** extension plus the runner.
+  - The extension writes a heartbeat file from pi's own event loop every few seconds, with the run's state: idle, model streaming, or running a tool (name, start time, declared bound). A fresh heartbeat proves pi is responsive, not that it is making progress; progress is pi-hang-guard's job.
+  - It also ends headless runs cleanly: when the agent finishes, gives up, or pi-hang-guard has acted more than its configured number of times, it records the result (done, blocked, stalled) and shuts pi down.
+  - **Mac:** `role_agent` spawned the child `pi` and watches the heartbeat. If it goes stale, it stops the process and runs the close steps itself.
+  - **k3s:** a liveness probe checks the heartbeat's age. If it goes stale, Kubernetes stops the container; the Job's wrapper traps the signal and runs the close steps within the grace period. The Job does not retry (`backoffLimit: 0`).
+- **Settings for pi-watchdog:** heartbeat path and interval, stale-after limit, how many pi-hang-guard actions end a run, and the result file path.
+- **Alternatives looked at:** `@pi-unipi/watchdog` asks a model whether each long call is stuck and checks process CPU and disk activity; heavier, and part of the UniPi suite. pi has no built-in tool-call timeout (pi issues #2987, #8857).
 
 ## Startup speed
 
