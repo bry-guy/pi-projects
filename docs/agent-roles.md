@@ -12,7 +12,7 @@ Status: design, not built.
 
 - **Repos define roles.** Repos are permanent, so a role lives with its repo in `.pi/roles/<role>.yaml`. A role lists egress hosts, secret names (not values) and broker actions.
 - **Projects grant roles.** A project is a short-lived grouping of repos for a goal. Its `project.json` lists which repo roles its agents may take on.
-- **One role per session.** Roles don't compose. The project agent (the one you talk to) has few or no credentials. To do role work it starts an agent as that role, with the task. That agent has its own VM, egress and secrets, and reports back as text.
+- **One role per session.** Roles don't compose. The project agent (the one you talk to) runs as `roles.default` from `project.json`, which can be any granted role. With no default it runs with no role: no role secrets and no role egress. To do another role's work it starts an agent as that role, with the task. That agent has its own VM or pod, egress and secrets, and reports back as text.
 - **No prompts for granted work.** Granting a role to a project is the decision. Anything the role allows runs without asking.
 - **Admin work is out of scope for now.** Agents propose admin commands and Bryan runs them.
 
@@ -42,7 +42,7 @@ broker:  { tofu: { plan: auto } }
 {
   "repos":  [{ "name": "infra", "url": "…", "branch": "main" }],
   "mounts": { "repos": "ro-files", "worktrees": "rw", "hide": [".pi", ".envrc", "fnox.local.toml", ".env*", "node_modules"] },
-  "roles":  ["infra/infra-operator", "infra/infra-developer"]
+  "roles":  { "default": "infra/infra-operator", "grant": ["infra/infra-operator", "infra/infra-developer"] }
 }
 ```
 
@@ -103,11 +103,21 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 Lifecycle, owned by the harness, not the agent:
 
 1. **Start:** clone or fetch the repos (from the git cache), then run `pi -p "<task>"`. Tools that ask the user (`ask_user_question`) are disabled, so a blocked agent ends with "blocked: needs X" instead of waiting.
-2. **Stall watchdog, no time limit:** if the session makes no progress for a set time (e.g. 15 min), stop pi and report "stalled". Long runs that are still working are never cut off.
+2. **Stall watchdog, no time limit:** a run is stalled when nothing has happened for a set time (e.g. 15 min). Long runs that are still working are never cut off. See below.
 3. **Close:** push the branch, check that pi-sync has uploaded the session and report any sync failure, then exit. Finished Jobs are cleaned up automatically.
 4. **Continue:** after a blocker is fixed, a new run resumes from the same session and branch.
 
 On the Mac a sleeping laptop can pause a run; pi-keepalive helps.
+
+### Stall watchdog
+
+Two layers, the same on the Mac and in pods:
+
+- **Inside pi: a small extension in every role run.** It records the time of the last activity: model output streaming (`message_update`), tool output (`tool_execution_update`), and turn ends. It writes that time to a heartbeat file every few seconds. If activity stops for the limit, it aborts the current step (`ctx.abort()`), records "stalled" with the last tool that was running, and shuts pi down (`ctx.shutdown()`). This catches a hung tool or a stuck model call while pi itself still works.
+- **Outside pi: the runner watches the heartbeat file.** It catches pi itself hanging or crashing, when the extension can't act.
+  - **Mac:** `role_agent` spawned the child `pi` process and watches the file. If it goes stale, it stops the process (SIGTERM, then SIGKILL) and runs the close steps itself.
+  - **k3s:** a liveness probe checks the file's age. If it goes stale, Kubernetes stops the container. The Job's wrapper traps the stop signal and runs the close steps within the termination grace period. The Job does not retry (`backoffLimit: 0`), so a stalled run ends as failed with its state saved.
+- **Known limit:** a tool that is working but prints nothing for longer than the limit (a quiet build) looks stalled. Tools should print progress, or the limit should be generous.
 
 ## Startup speed
 
