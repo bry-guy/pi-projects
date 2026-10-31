@@ -109,19 +109,23 @@ Lifecycle, owned by the harness, not the agent:
 
 On the Mac a sleeping laptop can pause a run; pi-keepalive helps.
 
-## Caching
+## Startup speed
 
-- **Tools baked into worker images.** The main lever. Common tools never install at run time.
-- **Shared tool cache.** A cluster volume of installed mise tools, filled by one trusted job and mounted read-only in role pods. Read-only so one role can't swap a binary another role runs.
-- **Download cache** (optional). A caching proxy for tool downloads. Saves bandwidth, but tools still unpack each run.
-- **Git cache.** Bare copies of repos on a cluster volume, refreshed on a schedule. Pods clone with `git clone --reference`, so only new commits come from GitHub. Pushes go straight to GitHub. Mount only the repos a role may use.
+- **Now:** bake common tools into worker images, so they never install at run time.
+- **Later:** shared read-only caches for git, mise tools and language packages are a separate effort that builds on this one. See [cluster-caches.md](cluster-caches.md).
+
+## Egress in pods
+
+- **Egress proxy first.** Role pods may reach only an in-cluster egress proxy, enforced with standard IP-based NetworkPolicy. The proxy checks each request's hostname against the role's allowlist, as Gondolin does on the Mac.
+- **Non-HTTP traffic** (Postgres, the k3s API on 6443) gets plain IP rules in the role's NetworkPolicy; those addresses are ours and stable.
+- **Hostname-aware network policies** (e.g. Cilium `toFQDNs`) are optional for clusters that already run them. Switching a cluster's network plugin is disruptive admin work, so it is not part of this plan.
 
 ## Hosting for others
 
 The core is standard Kubernetes: Jobs, ServiceAccounts, Secrets, pi-sync, role files and project grants. Bryan's setup adds plug-ins: 1Password/fnox as a secret source (default: k8s Secrets), Gondolin on the Mac, a Fedora worker image, the git cache and infra's roles.
 
 - **Default image:** slim Debian, not Alpine. mise prebuilt tools expect glibc; Alpine uses musl. Ship the default image, the install hook, and an example Dockerfile for baking in your own tools.
-- **Egress by hostname** is not standard NetworkPolicy, which works on IP addresses. Ship an egress proxy as the default and hostname-aware network policies (e.g. Cilium) as optional.
+- **Egress by hostname** is not standard NetworkPolicy, which works on IP addresses. The egress proxy is the default; hostname-aware network policies are optional.
 
 ## Open checks
 
