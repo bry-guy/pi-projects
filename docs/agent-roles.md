@@ -82,16 +82,19 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 
 ## Dispatching role agents
 
-- **Tool:** pi-projects adds `role_agent(role, task, cwd?)`. It starts a separate `pi` process as that role, with its own VM, and returns the result as text. The role definition comes from `repos/<repo>/.pi/roles/` and the grant from `project.json`, never from `cwd`. `cwd` changes which code the agent works on, not what it may do.
+- **Tool:** pi-projects adds `role_agent(role, task, cwd?)`. It asks the runner to start a separate `pi` as that role, with its own VM or pod, and later reports the result as text. The tool only asks; the runner supervises (see Role agent runs). The role definition comes from `repos/<repo>/.pi/roles/` and the grant from `project.json`, never from `cwd`. `cwd` changes which code the agent works on, not what it may do.
 - **Prompt:** at session start pi-projects injects the granted roles, e.g. "You may dispatch infra/infra-operator and infra/infra-developer with `role_agent` for work that needs their access. Use subagents for reading and exploring."
 - **Errors name the role:** a blocked host or missing secret says which granted role has it, e.g. "api.cloudflare.com is not allowed for this role; infra/infra-developer has it, use role_agent."
 - **A new session, not a fork.** A role agent starts as a fresh session in the project with just the task. It appears in the project's session history and can be opened, continued or taken over. Forking the calling session (`pi --fork`) to pass context is a later option.
-- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the forked session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified.
+- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified.
 - **Subagents stay** for same-role work. `@gotgenes/pi-subagents` runs children in the parent's process and can only change their working directory, so they can't switch roles or do more than their parent.
 
 ## Role agent runs
 
-`role_agent` has two backends with the same behaviour: the agent calls the tool, a new session appears in the project, and it reports back.
+`role_agent` hands the run to a **runner** outside the calling session, so a run survives the caller closing. The runner has two backends with the same behaviour: a new session appears in the project, and the result is reported back.
+
+- **Mac:** a small local runner CLI, started detached (e.g. `pi-role run <role> <task>`). It starts the Gondolin VM and the child `pi`, supervises it, and runs the close steps.
+- **pi-web:** the gateway creates a Kubernetes Job; Kubernetes supervises it.
 
 | | Mac (CLI) | pi-web |
 |---|---|---|
@@ -102,14 +105,14 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 
 Lifecycle, owned by the harness, not the agent:
 
-1. **Start:** clone or fetch the repos (from the git cache), then run `pi -p "<task>"`. Tools that ask the user (`ask_user_question`) are disabled, so a blocked agent ends with "blocked: needs X" instead of waiting.
-2. **Stall watchdog, no time limit:** a run is stalled when nothing has happened for a set time (e.g. 15 min). Long runs that are still working are never cut off. See below.
+1. **Start:** clone or fetch the repos (from the git cache), then run `pi -p "<task>"`. `pi -p` exits on its own when the agent finishes. Tools that ask the user (`ask_user_question`) are disabled, so a blocked agent ends with "blocked: needs X" instead of waiting.
+2. **Stalls, no time limit:** stuck tools are handled inside pi, and a frozen pi is caught by the runner. See below.
 3. **Close:** push the branch, check that pi-sync has uploaded the session and report any sync failure, then exit. Finished Jobs are cleaned up automatically.
 4. **Continue:** after a blocker is fixed, a new run resumes from the same session and branch.
 
 On the Mac a sleeping laptop can pause a run; pi-keepalive helps.
 
-### Stall watchdog
+### Stalls
 
 Two questions, answered in two places:
 
@@ -117,12 +120,12 @@ Two questions, answered in two places:
   - **Tool calls: [pi-hang-guard](https://github.com/ducaoya/pi-hang-guard)** (npm, MIT, v0.3.6). It measures silence, not run time: a `bash` command that keeps printing is never stalled. Known-slow commands get higher limits through a configurable list, and a command with an explicit bound (`timeout 3600 gh run watch`) is measured against that bound instead. In `guard` mode it aborts a stuck call and gives the model a report so it can change approach. Configured in `hang-guard.json` (`PI_GUARD_CONFIG`); role runs need `mode: guard` and `resumeWithoutUI: true`.
   - **Model calls:** a provider stream that stalls is handled by a retry extension such as `@narumitw/pi-retry`.
   - **Long waits such as CI:** the agent uses a command that prints while it waits (`gh run watch`), adds those commands to the slow list, or wraps the wait in `timeout <bound>`. The skill for role runs says so.
-- **Is pi alive?** Answered outside pi, by a small configurable **pi-watchdog** extension plus the runner.
-  - The extension writes a heartbeat file from pi's own event loop every few seconds, with the run's state: idle, model streaming, or running a tool (name, start time, declared bound). A fresh heartbeat proves pi is responsive, not that it is making progress; progress is pi-hang-guard's job.
-  - It also ends headless runs cleanly: when the agent finishes, gives up, or pi-hang-guard has acted more than its configured number of times, it records the result (done, blocked, stalled) and shuts pi down.
-  - **Mac:** `role_agent` spawned the child `pi` and watches the heartbeat. If it goes stale, it stops the process and runs the close steps itself.
+- **Is pi alive?** Answered outside pi, by the runner, using a heartbeat.
+  - **pi-heartbeat** (small, configurable extension; name free on npm) writes a heartbeat file from pi's event loop every few seconds, with the run's state: idle, model streaming, or running a tool (name, start time, declared bound). A fresh heartbeat proves pi is responsive, not that it is making progress; progress is pi-hang-guard's job. Settings: file path and interval.
+  - **Mac:** the runner watches the heartbeat. If it goes stale, it stops the child `pi` and runs the close steps itself.
   - **k3s:** a liveness probe checks the heartbeat's age. If it goes stale, Kubernetes stops the container; the Job's wrapper traps the signal and runs the close steps within the grace period. The Job does not retry (`backoffLimit: 0`).
-- **Settings for pi-watchdog:** heartbeat path and interval, stale-after limit, how many pi-hang-guard actions end a run, and the result file path.
+  - **Result:** the runner derives done, blocked or stalled from the session's last message and how pi exited; no extension needs to end the run.
+- **Unverified:** whether pi-hang-guard's auto-resume (`resumeWithoutUI`) keeps a `pi -p` run going after it aborts a call, or whether `pi -p` exits first.
 - **Alternatives looked at:** `@pi-unipi/watchdog` asks a model whether each long call is stuck and checks process CPU and disk activity; heavier, and part of the UniPi suite. pi has no built-in tool-call timeout (pi issues #2987, #8857).
 
 ## Startup speed
