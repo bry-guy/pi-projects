@@ -90,6 +90,8 @@ pi-sync, sandboxing, secrets, memory engines, the pi-web UI and workspaced. Movi
 
 ## Phase 2: sandboxing and secrets (Gondolin)
 
+Superseded in part by [agent-roles.md](agent-roles.md): repos define roles, projects grant them, and only `repos/` (read-only) and `worktrees/` (read-write) are mounted, not the whole project folder.
+
 - **Execution:** run project sessions inside a Gondolin micro-VM, with the project folder mounted.
 - **Secrets:** a project declares secret references, never values. For example: `{name, source: "keychain:…|fnox:…", hosts: [...]}`.
   - Repo-specific secrets sit on the repo. Infra secrets, such as a homelab prod database, sit at project level.
