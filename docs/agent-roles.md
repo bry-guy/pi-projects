@@ -89,6 +89,40 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 - **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the forked session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified.
 - **Subagents stay** for same-role work. `@gotgenes/pi-subagents` runs children in the parent's process and can only change their working directory, so they can't switch roles or do more than their parent.
 
+## Role agent runs
+
+`role_agent` has two backends with the same behaviour: the agent calls the tool, a new session appears in the project, and it reports back.
+
+| | Mac (CLI) | pi-web |
+|---|---|---|
+| Runs as | local `pi` process plus a Gondolin VM | a Kubernetes Job per run |
+| Starts in | ~1-2 s | ~10-20 s once cached (guess, measure) |
+| Storage | the project's worktrees | a throwaway disk; clones what it needs and pushes a branch |
+| Tools | per-role mise cache on disk | baked into the image, plus a read-only shared cache |
+
+Lifecycle, owned by the harness, not the agent:
+
+1. **Start:** clone or fetch the repos (from the git cache), then run `pi -p "<task>"`. Tools that ask the user (`ask_user_question`) are disabled, so a blocked agent ends with "blocked: needs X" instead of waiting.
+2. **Stall watchdog, no time limit:** if the session makes no progress for a set time (e.g. 15 min), stop pi and report "stalled". Long runs that are still working are never cut off.
+3. **Close:** push the branch, check that pi-sync has uploaded the session and report any sync failure, then exit. Finished Jobs are cleaned up automatically.
+4. **Continue:** after a blocker is fixed, a new run resumes from the same session and branch.
+
+On the Mac a sleeping laptop can pause a run; pi-keepalive helps.
+
+## Caching
+
+- **Tools baked into worker images.** The main lever. Common tools never install at run time.
+- **Shared tool cache.** A cluster volume of installed mise tools, filled by one trusted job and mounted read-only in role pods. Read-only so one role can't swap a binary another role runs.
+- **Download cache** (optional). A caching proxy for tool downloads. Saves bandwidth, but tools still unpack each run.
+- **Git cache.** Bare copies of repos on a cluster volume, refreshed on a schedule. Pods clone with `git clone --reference`, so only new commits come from GitHub. Pushes go straight to GitHub. Mount only the repos a role may use.
+
+## Hosting for others
+
+The core is standard Kubernetes: Jobs, ServiceAccounts, Secrets, pi-sync, role files and project grants. Bryan's setup adds plug-ins: 1Password/fnox as a secret source (default: k8s Secrets), Gondolin on the Mac, a Fedora worker image, the git cache and infra's roles.
+
+- **Default image:** slim Debian, not Alpine. mise prebuilt tools expect glibc; Alpine uses musl. Ship the default image, the install hook, and an example Dockerfile for baking in your own tools.
+- **Egress by hostname** is not standard NetworkPolicy, which works on IP addresses. Ship an egress proxy as the default and hostname-aware network policies (e.g. Cilium) as optional.
+
 ## Open checks
 
 1. **Read-only files with a writable `.git`.** Mount `repos/<repo>/` read-only with `.git` mounted read-write on top. Test in a VM on the Mac that editing or checking out in `repos/` fails while `git worktree add` and commits in the worktree work.
