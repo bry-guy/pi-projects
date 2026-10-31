@@ -21,7 +21,7 @@ Status: design, not built. Replaces the earlier ideas of role files read from `m
 | What | Where | Changed by |
 |---|---|---|
 | Role definition (egress, secret names, broker actions) | `<repo>/.pi/roles/<role>.yaml` on `main` | a commit to the repo's `main`, by Bryan or a PR he merges |
-| Grant (which repo roles a project may use) | `project.json` | Bryan |
+| Grant (which repo roles a project may use) | `project.json` (never mounted) | Bryan |
 | Secret sources (`GH_TOKEN` → `op://…` or a k8s Secret) | global pi config, keyed by repo role, e.g. `infra/infra-developer` | Bryan |
 | Shared pieces (the `tooling` host group, default image) | global pi config | Bryan |
 | Pod grants | the pi-workspaced gateway's grants | a PR to infra |
@@ -52,6 +52,9 @@ broker:  { tofu: { plan: auto } }
 - **The host reads roles from the main checkout** (`repos/<repo>/.pi/roles/`), which is mounted read-only.
 - **`project.json` and global config are never mounted.** Only `repos/` (read-only) and `worktrees/` (read-write) are.
 - **A role changes only when `main` changes** and the host pulls.
+- **Branch checkouts are shared clones, not `git worktree`s.** A `git worktree` writes refs, logs and objects into the main repo's `.git`. If that is writable from the VM, the agent can move `main` or plant hooks. `git clone --shared repos/<repo> worktrees/<name>` gives each branch its own `.git` and borrows objects read-only through `objects/info/alternates`, so `repos/` can be fully read-only. Tested on Linux: a commit in the clone works with the source fully read-only.
+- **The host never runs repo code from `worktrees/`.** No host pi, `mise`, `direnv` or git hooks with a worktree as the working directory. Role agents start on the host with their tools in a VM.
+- **The repo that stores grants must not be pushable by agent credentials.** pi-projects syncs `project.json` through a git repo, and every machine pulls it at session start. If an agent's GitHub credential could push there, it could widen its own grants. The same applies to dotfiles if grants live there. Per-repo deploy keys or a separate agent GitHub identity close this.
 
 ## Pieces
 
@@ -63,11 +66,12 @@ broker:  { tofu: { plan: auto } }
 
 ## Open checks
 
-1. **Worktree git data lives in the main repo** (`repos/<repo>/.git/worktrees/…`). If `repos/` is fully read-only, `git commit` in a worktree fails. `.git` likely has to stay writable while the checkout files are read-only. Test this.
-2. **Hidden paths must block writes,** not just reads, so the agent can't create `.pi/roles/x.yaml` in a worktree. Test this.
-3. **Gondolin read-only mounts** were "best-effort" per pi-ez-chat-mount's notes. Confirm that a write, a delete and a `git commit` fail.
-4. **Can pi subagents run in their own VM?** If not, role agents are new pi sessions.
-5. **Known gap:** the agent uses Bryan's `gh` login, so it could merge its own PR that changes a role. A separate agent GitHub identity closes this later.
+1. **Worktree git data.** Resolved by design: use shared clones (see above). Tested on Linux without a VM. A host `git gc` on `repos/` could in theory drop objects a clone relies on; `git repack -a -d` in the clone (or `--dissociate`) removes the dependency if that matters.
+2. **Hidden paths block writes.** pi-ez-chat-mount's filter is a proxy over every provider method. It rejects any call whose path argument (both paths for `rename`, `copy`, `link`, `symlink`) contains the hidden name, and filters directory listings. Swapping `node_modules` for a configurable list covers `.pi`. Code-read only, not run in a VM. An agent could still add `.pi/roles/x.yaml` to a commit with git plumbing; that only matters if it reaches `main`, which needs Bryan's merge.
+3. **Gondolin read-only mounts.** `ReadonlyProvider` (`host/src/vfs/readonly.ts`, v0.14.0) returns `EROFS` for write opens, `mkdir`, `rmdir`, `unlink`, `rename`, `link`, `chmod` and `symlink`, and Gondolin's `docs/security.md` recommends it for host directories. Code-read only. Still test in a VM on the Mac that write, delete, rename and `git commit` fail.
+4. **Subagents.** `@gotgenes/pi-subagents` runs children in the parent's process (`createAgentSession`), with a `WorkspaceProvider` hook that only sets the child's working directory. It has no per-child sandbox. Role agents should be separate `pi` processes started on the host with a role and their own VM. A `pi` started inside a VM is not an escape: it has only that VM's access.
+5. **Self-merge gap:** the agent uses Bryan's `gh` login, so it could merge its own PR that changes a role. A separate agent GitHub identity closes this later.
+6. **Host pi loading worktree config.** If a host pi ever runs with a worktree as its working directory, it may load that worktree's `.pi/` extensions and settings on the host. Check how pi discovers project extensions and whether a role agent can start without them.
 
 ## First step
 
