@@ -73,11 +73,15 @@ no native addons in the image, so suspect node/runtime; capture
 - Project-first on the web: old repo-keyed workers are removed from
   Settings -> Workers; web no longer creates them. The single-repo code path
   stays for pi-web without PI_PROJECTS_DIR (local, self-hosted).
-- Next (proposed, not built): project code sync. pi-projects snapshots each
-  repo/worktree with unshared work at turn end to
-  `refs/pi-projects/<project-id>/<repo>/<branch>` and restores on arrival
-  (create missing worktrees; restore into clean trees only; otherwise offer).
-  Replaces pi-sync's per-conversation code sync inside projects.
+- Project sessions live in the project: web lists every session under the
+  project folder entry, starts and opens them there; pi-sync opens arriving
+  project conversations at the project root (pi-sync c9b85c4).
+- Project code sharing, in pi-sync (d196f89; it already owned turn-end
+  capture, leases and arrival): every repo/worktree with unshared work is
+  pushed to `refs/pi-projects/<project-id>/<branch>` on that repo's remote,
+  compare-and-swap so unseen work is never overwritten. Arrival creates
+  missing worktrees and restores into clean trees only; otherwise a notice
+  and `/sync code`. Replaces per-conversation code sync inside projects.
 
 ## Rules
 
