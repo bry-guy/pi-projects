@@ -66,7 +66,7 @@ broker:  { tofu: { plan: auto } }
 
 ## Dispatching role agents
 
-- **Tool:** pi-projects adds `role_agent(role, task)`. It starts a separate `pi` process as that role, with its own VM, and returns the result as text.
+- **Tool:** pi-projects adds `role_agent(role, task, cwd?)`. It starts a separate `pi` process as that role, with its own VM, and returns the result as text. The role definition always comes from `repos/<repo>/.pi/roles/` and the grant from `project.json`, never from `cwd`. Running a role agent in an agent worktree or on the agent copy's edited `main` changes which code it works on, not what it may do.
 - **Prompt:** at session start pi-projects injects the granted roles, e.g. "You may dispatch infra/infra-operator and infra/infra-developer with `role_agent` for work that needs their access. Use subagents for reading and exploring."
 - **Errors name the role:** a blocked host or missing secret says which granted role has it, e.g. "api.cloudflare.com is not allowed for this role; infra/infra-developer has it, use role_agent."
 - **Subagents stay** for same-role work. They can't do more than their parent.
