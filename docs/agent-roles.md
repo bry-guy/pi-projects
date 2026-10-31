@@ -93,7 +93,7 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 
 `role_agent` hands the run to a **runner** outside the calling session, so a run survives the caller closing. The runner has two backends with the same behaviour: a new session appears in the project, and the result is reported back.
 
-- **Mac:** a small local runner CLI, started detached (e.g. `pi-role run <role> <task>`). It starts the Gondolin VM and the child `pi`, supervises it, and runs the close steps.
+- **Desktop:** a small runner CLI (e.g. `pi-role run <role> <task>`) starts the Gondolin VM and the child `pi`, and runs the close steps. Supervision belongs to the OS: monit on macOS, systemd on Linux.
 - **pi-web:** the gateway creates a Kubernetes Job; Kubernetes supervises it.
 
 | | Mac (CLI) | pi-web |
@@ -121,8 +121,9 @@ Two questions, answered in two places:
   - **Model calls:** a provider stream that stalls is handled by a retry extension such as `@narumitw/pi-retry`.
   - **Long waits such as CI:** the agent uses a command that prints while it waits (`gh run watch`), adds those commands to the slow list, or wraps the wait in `timeout <bound>`. The skill for role runs says so.
 - **Is pi alive?** Answered outside pi, by the runner, using a heartbeat.
-  - **pi-heartbeat** (small, configurable extension; name free on npm) writes a heartbeat file from pi's event loop every few seconds, with the run's state: idle, model streaming, or running a tool (name, start time, declared bound). A fresh heartbeat proves pi is responsive, not that it is making progress; progress is pi-hang-guard's job. Settings: file path and interval.
-  - **Mac:** the runner watches the heartbeat. If it goes stale, it stops the child `pi` and runs the close steps itself.
+  - **pi-heartbeat** (small, configurable extension; name free on npm) writes a heartbeat file from pi's event loop every few seconds, with the run's state: idle, model streaming, or running a tool (name, start time, declared bound). A fresh heartbeat proves pi is responsive, not that it is making progress; progress is pi-hang-guard's job. Settings: file path and interval. When `NOTIFY_SOCKET` is set (running under systemd) it also sends `WATCHDOG=1`, e.g. through `systemd-notify`.
+  - **macOS:** monit (`brew install monit`). For each run the runner writes a monit check, `check file <run> with path <heartbeat>` / `if timestamp > 10 minutes then exec "<stop script>"`, and reloads monit; it removes the check when the run ends. The stop script stops the child `pi`, and the runner then runs the close steps. Monit checks on its own cycle (30-120 s), which is fine for a minutes-long limit.
+  - **Linux:** the runner starts each run as a transient systemd user unit, `systemd-run --user -p Type=notify -p NotifyAccess=all -p WatchdogSec=10min ...`. If the watchdog pings stop, systemd stops the unit; an `ExecStopPost=` runs the close steps. Unverified: notify from a node process via `systemd-notify` with `NotifyAccess=all`.
   - **k3s:** a liveness probe checks the heartbeat's age. If it goes stale, Kubernetes stops the container; the Job's wrapper traps the signal and runs the close steps within the grace period. The Job does not retry (`backoffLimit: 0`).
   - **Result:** the runner derives done, blocked or stalled from the session's last message and how pi exited; no extension needs to end the run.
 - **Unverified:** whether pi-hang-guard's auto-resume (`resumeWithoutUI`) keeps a `pi -p` run going after it aborts a call, or whether `pi -p` exits first.
