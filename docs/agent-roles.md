@@ -85,6 +85,8 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 - **Tool:** pi-projects adds `role_agent(role, task, cwd?)`. It starts a separate `pi` process as that role, with its own VM, and returns the result as text. The role definition comes from `repos/<repo>/.pi/roles/` and the grant from `project.json`, never from `cwd`. `cwd` changes which code the agent works on, not what it may do.
 - **Prompt:** at session start pi-projects injects the granted roles, e.g. "You may dispatch infra/infra-operator and infra/infra-developer with `role_agent` for work that needs their access. Use subagents for reading and exploring."
 - **Errors name the role:** a blocked host or missing secret says which granted role has it, e.g. "api.cloudflare.com is not allowed for this role; infra/infra-developer has it, use role_agent."
+- **Fork for context:** a role agent can start as a fork of the calling session (`pi --fork <session> --session-id <new>`), so it has the conversation so far instead of a bare task. The result is a real session file in the project, so it appears in session lists and can be opened, continued or taken over.
+- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the forked session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified.
 - **Subagents stay** for same-role work. `@gotgenes/pi-subagents` runs children in the parent's process and can only change their working directory, so they can't switch roles or do more than their parent.
 
 ## Open checks
