@@ -50,7 +50,7 @@ broker:  { tofu: { plan: auto } }
 
 - **The VM never sees `.pi/`.** pi-mounts hides it in every mount, read-only and read-write, for reads and writes.
 - **The host reads roles from the main checkout** (`repos/<repo>/.pi/roles/`), which is mounted read-only.
-- **`project.json` and global config are never mounted.** Only `repos/` (read-only) and `worktrees/` (read-write) are.
+- **`project.json` and global config are never mounted.** Only `repos/` (read-only), `agent/` and `worktrees/` (read-write) are.
 - **A role changes only when `main` changes** and the host pulls.
 - **Agents get their own repo to make worktrees from.** A `git worktree` writes refs and objects into its repo's `.git`. Made from Bryan's `repos/<repo>`, that would let the agent move `main`, plant hooks or overwrite objects `main` uses. Instead each repo gets an agent copy, `agent/<repo>.git`: a bare `git clone --shared` of `repos/<repo>` that borrows history read-only through `objects/info/alternates`. Agents run normal `git worktree add` against it, so worktree tooling and habits keep working, and `repos/` stays fully read-only. The host fetches the agent copy's `main` from `repos/<repo>` at session start. Tested on Linux: worktree add and commit work with `repos/<repo>` fully read-only; creating it takes about the same time as a worktree (22 ms on pi-web).
 - **The host never runs repo code from `worktrees/`.** No host pi, `mise`, `direnv` or git hooks with a worktree as the working directory. Role agents start on the host with their tools in a VM.
