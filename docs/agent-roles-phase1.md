@@ -1,99 +1,139 @@
 # Phase 1 (agent roles and sandboxing): implementation and verification plan
 
-Source design: [agent-roles.md](agent-roles.md) (Phase 1). Phase 2 is [cluster-caches.md](cluster-caches.md), to be defined later.
-Status: draft, reviewed by the advisor 2026-11-01, **waiting on Bryan's answers to the questions below**. Nothing is built.
-`agent-roles.md` is unchanged until the questions are answered.
+Source design: [agent-roles.md](agent-roles.md). Phase 2 is [cluster-caches.md](cluster-caches.md), to be defined later.
+Status: draft, revised 2026-11-01 after Bryan's feedback and advisor review. **Open questions at the end.** Only M2 has
+started. `agent-roles.md` will be updated once the open questions are answered.
 
-**Where it can run:** M1, M3 and M4 need the laptop (Gondolin needs QEMU with HVF or KVM). Web workers have no `/dev/kvm`,
-qemu, tmux or pi binary, so a worker session can only build M2 and the unit tests.
+## Goal and threat model
 
-## What exists today (checked)
+Phase 1 is about **mistakes**: an agent with good intentions misusing access it holds. What limits that:
 
-- **pi-web gateway grants are built** (pi-web `workspaced/grants.js`): `{anyProject|repos, serviceAccount, env: [Secret], namespace, egress: label}` from `WORKSPACED_GRANTS`, assigned per worker (`PUT /v1/workspaces/:name/grant`). `ws-infra` uses the operator grant (`infra-operator` SA, `operator-env` Secret, `egress: open`).
-- **Worker egress is already restricted** (infra `selfhost/platform/pi-workspaced/network-policy.yaml`). Workers get internet, but not cluster or LAN CIDRs, unless they're labelled `egress: open`. There is no hostname allowlist or proxy.
-- **Workers have no /dev/kvm**, so Gondolin can't run in pods (consistent with the doc: "pods don't run agents in a VM yet").
-- **Gondolin 0.14** (macOS and Linux, QEMU) has `RealFSProvider`, `ReadonlyProvider`, symlink-escape hardening, and a `ShadowProvider` that hides paths (deny, or tmpfs writes). It does hostname egress allowlists via HTTP/TLS MITM, and per-host secret placeholders: the guest never sees the value, and Basic auth works too.
-- **pi can run built-in tools in a VM** through public API: `createBashTool`/`createReadTool`/... accept `Operations`, as in gondolin `host/examples/pi-gondolin.ts` (292 lines) and pi-chat `gondolin.ts`.
-- pi-ez-chat-mount (613 lines) and pi-ez-chat-workspace (plugin-section registry via a `Symbol.for` registry) exist as references. pi-ez-secret-broker v0.2 brokers only bearer HTTP and Proxmox.
-- infra `AGENTS.md` has Roles (infra-operator, infra-developer, infra-admin) backed by fnox and 1Password vaults, plus an SSH deploy key for infra-developer. No repo has `.pi/roles/` yet.
-- pi CLI has `--tools`/`--exclude-tools`. pi has built-in retry, so `@narumitw/pi-retry` is deprecated and the doc should drop it.
-- pi-background now drives `pi --mode rpc` as a detached runner, with lock, run record, socket, watch, stop, and forwarded dialogs.
+1. Agent processes don't hold Bryan's credentials.
+2. Role credentials exist only in role runs.
+3. Agents can't widen their own grants.
+4. Agent GitHub write is scoped to the project's repos.
 
-## Gaps found in the design
+Hostname egress allowlists and secret placeholders mainly defend against **injection**: exfiltration, or content that steers
+the agent. They're the Phase 1.5 "parity with Gondolin" ideal, not Phase 1 requirements.
 
-Gaps 1-3 are security findings. Gaps 4-5 are **proposed changes to decisions in agent-roles.md**; Bryan decides them.
+Agent-written code running (tests, hooks) is accepted, since agents run code anyway. Read-only repos and hidden `.pi`
+become workflow conveniences once grants are signed and roles are read from `origin`.
 
-1. **Host-side tools and code escape the VM.** Only the tools we replace (read, write, edit, bash, ls, find, grep) run in the VM. Every other extension tool runs on the host as Bryan: mcp, pi-lsp, pi-lens (which runs linters whose configs are code), web-access, subagents, worktree_include. *Proposal:* a sandboxed session keeps a **host-tool allowlist** (project_*, advisor, todo, ask_user_question, web search/fetch) and disables the rest via pi's tool selection. pi-lens and pi-lsp stay off in sandboxed sessions until they can run in the VM.
-   Two more vectors to check: (a) `@gotgenes/pi-subagents` children: do they use the parent's overridden tools, or build
-   their own host `createBashTool`? If they build their own, disable subagents in sandboxed sessions. (b) project-local
-   `.pi/extensions` load into the host pi. The session cwd is the project folder (not agent-writable in the VM), but confirm
-   pi never loads extensions from an agent-writable worktree, and check what pi's project trust does there.
-2. **Writable `.git` runs code on the host.** An agent can set `core.fsmonitor` or `core.hooksPath` or write hooks, and host-side git (pi-sync checkout sync runs `git status` every turn, plus pi-web's git panel) would execute it automatically as Bryan. The doc accepts hooks run *by Bryan*, but this one fires automatically. *Proposal:* shadow `.git/config`, `.git/hooks` and `.git/worktrees/*/config.worktree` read-only in the mount (watch `include.path`), and have pi-sync's and pi-web's git calls pass `-c core.fsmonitor=false -c core.hooksPath=/dev/null`. If `git worktree add` breaks with a read-only config, fall back to that host-side hardening alone.
-3. **Grants can be rewritten through sync.** project.json lives in the state repo. Web project workers are not sandboxed and push with Bryan's GitHub OAuth, so a web agent can edit `roles.grant` and the change syncs to the Mac. *Proposal:* the Mac applies synced grant changes only after a one-time local confirmation ("pi-web-ecosystem now grants infra/infra-developer, allow?"), stored per machine, outside the state repo. The doc's claims "agents never push to the share repo" and "agent GitHub access is per repo" hold only for sandboxed (Mac) sessions; on web they cannot hold in Phase 1.
-4. **(Proposed change: Deployments instead of Jobs, or defer web.) On web, Phase 1 cannot sandbox the project agent** (no KVM, Bryan's GitHub credential in the worker). Web Phase 1 = **role workers through existing gateway grants** (two keys: project.json grants the role *and* infra's `WORKSPACED_GRANTS` must contain a matching grant). Use existing Deployment workers (`ws-<project>--<role>`, sleep and wake) rather than new Job machinery. Jobs, the egress proxy, and sandboxing the web project agent move to a later phase. Caution: letting a worker call the gateway gives a new credential to the unsandboxed web agent, which already holds Bryan's GitHub OAuth and can rewrite `roles.grant`. On web the only real gate is infra's `WORKSPACED_GRANTS` repo list. That is why web is split out as Phase 1b.
-5. **(Proposed change, an option, not the recommendation.) Role-run runner: reuse pi-background, not a new pi-role CLI plus monit/systemd.** On the Mac, pi-background's runner already gives a detached `pi --mode rpc`, lock, run record, /bg list, stop, watch and forwarded dialogs. Add `PI_ROLE=<repo>/<role>` so pi-mounts in the child builds that role's VM. A role run that needs Bryan **waits on him** (forwarded dialog) instead of ending "blocked". This contradicts the doc's "disable ask_user_question; a blocked run ends 'blocked: needs X'" and "the harness owns the lifecycle". Tradeoff: waiting keeps the turn alive and lets Bryan unblock it in place, while ending makes runs predictable and unattended-safe. Either way the runner can be pi-background's. Stalls: install pi-hang-guard for tool calls (check that it composes with the overridden bash tool). pi-heartbeat with monit/systemd is deferred, since pi-background already reports a dead runner. *Dependency:* pi-projects' `role_agent` calls pi-background's runner (exported spawn helper). If pi-background is absent, role_agent fails with "install pi-background".
-6. **Non-HTTP credentials:** git over SSH deploy keys and the k3s API (6443, custom CA, bearer token) don't fit header injection cleanly. *Proposal:* Phase 1 roles use HTTPS git with an injected `GH_TOKEN`. k3s via Gondolin TLS MITM is a spike, and if it fails, infra roles stay on the host (as today) until the broker exists.
-7. **Default sandboxed agent egress:** "no role egress" needs a base set, or the agent can't fetch packages. *Proposal:* the default allows the global `tooling` group (npm, pypi, github.com read, mise downloads) with no secrets.
+## Facts this plan relies on (checked 2026-11-01)
+
+- **Gateway grants exist** (pi-web `workspaced/grants.js`): `{anyProject|repos, serviceAccount, env: [Secret], namespace, egress: label}` from `WORKSPACED_GRANTS`.
+  infra's network policy already blocks cluster and LAN CIDRs for workers unless they're labelled `egress: open`.
+  Workers are one project per pod, with their own disk.
+- **Workers have no `/dev/kvm`**, so Gondolin can't run in pods.
+- **Gondolin 0.14** (Mac, QEMU/HVF): read-only and real-FS providers, a shadow provider for hiding paths, symlink-escape
+  hardening, hostname allowlists, per-host secret placeholders.
+- **pi runs built-in tools anywhere** through public API (`createBashTool`/... with `Operations`; gondolin `host/examples/pi-gondolin.ts`). Other extensions' tools still run in the host pi.
+- **pi-subagents children are sandboxed with it** (code-read, `@gotgenes/pi-subagents` 25.0.5, `create-subagent-session.ts:258-299`).
+  Children reload every non-excluded extension and request tools by name, so an overriding sandbox `bash`/`read` applies.
+  Conditions:
+  - the sandbox extension keeps its VM at module level, keyed by project and role;
+  - it can't be listed in `excludedExtensionPackages`;
+  - project `.pi/agents` and settings aren't writable from the VM.
+  Runtime check: M1(j).
+- **NVIDIA OpenShell** (Apache-2.0, 0.1.x, weekly stable releases) is the off-the-shelf version of "executor pods plus a
+  placeholder proxy", with the agent inside the sandbox.
+  - Credential providers with placeholders, including OAuth2 refresh in the gateway.
+  - L7 rules by host, path and binary, including per-repo `git-receive-pack`.
+  - Landlock filesystem allowlists.
+  - Runs on Docker/Podman, a microVM driver, or Kubernetes (Agent Sandbox SIG CRDs and controller; no privileged pods).
+  We won't build our own; see Phase 1.5.
+- pi CLI has `--tools`/`--exclude-tools`. pi has built-in retry, so drop `@narumitw/pi-retry` from the design.
+
+## Design changes from agent-roles.md
+
+1. **On web, the worker pod is the sandbox.** No executor pods, no Jobs and no proxy of our own in Phase 1.
+   - **Default web agent:** the project worker with no infra grant. Bryan's GitHub OAuth is removed from workers and
+     replaced by a **token scoped to the project's repos plus the state repo**, minted by the trusted front end. Dotfiles
+     and other repos become unpushable from web.
+   - **Web role run:** a session in a **role worker** `ws-<project>--<role>` that carries the existing gateway grant.
+     New: a worker-to-gateway "dispatch role" call. Holding it is fine, because dispatching granted roles without a prompt is the design intent.
+   - **Enforcement on web is the gateway**, not pi-projects in the worker (the agent shares that pod). The gateway verifies
+     the signed grant and requires a matching `WORKSPACED_GRANTS` entry. On web the infra grant decides egress and secrets.
+     On the Mac the role yaml decides. Keeping the two aligned is a shortcut to fix later.
+2. **Grants are signed and live in dotfiles** (`~/.pi/agent/pi-roles.json`, yadm).
+   - `/project grant` signs with an SSH key held in 1Password (`ssh-keygen -Y sign`, Touch ID).
+   - The trust anchor (allowed-signers) is **not** in dotfiles. On the Mac it's outside every sandbox mount. On web infra
+     delivers it as a Secret or ConfigMap to the gateway.
+   - Unsigned or invalid grants are ignored, with "grant not signed; run /project grant on the Mac".
+3. **Role files are read from `origin/<default>`** after a fetch, so a role changes only through a merge on GitHub.
+   Checkout sync can move a local `main`, so local branches can't be trusted.
+4. **Mac interactive sessions: Gondolin, tools only** (the host is Bryan's whole home).
+   - Gap 1 is handled by a per-role tool policy: MCP servers only from the role's config, and pi-lens and pi-lsp off in sandboxed sessions.
+   - Mac role runs get Gondolin placeholders and egress for free.
+5. **Cheap hardening:** host-side git in pi-sync and pi-web passes `-c core.fsmonitor=false -c core.hooksPath=/dev/null`.
+   pi-syncd gets per-device tokens (every sandbox depends on it, since session writes become prompts elsewhere).
 
 ## Milestones
 
-**Phase 1a (Mac): M0-M4, M6. Phase 1b (web role workers): M5, a separate later decision.**
+Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1, M3 and M4 need a laptop session.
 
-Every VM step **must run on the laptop** (macOS, QEMU/HVF). This session's worker can't run Gondolin.
+### M0: Decisions
+- The open questions below are answered, and `agent-roles.md` is updated.
 
-### M0: Decide and scope (no code)
-- Bryan answers gaps 1-7 (or the advisor's revisions).
-- Pick the **first role**, following the doc's "First step": list what project agents keep failing at. Candidate: `pi-web/pi-web-developer` (GH_TOKEN for api.github.com and github.com, for PR and CI checks), which is simpler than infra.
-- Update `docs/agent-roles.md` with the decisions.
+### M1: Mac spikes (`scripts/spike-sandbox.mjs`, prints PASS or FAIL per check, run on the laptop)
+- (a) repos/ read-only, so an edit fails.
+- (b) `git worktree add` and a commit in the worktree both work.
+- (c) `.pi`, `.envrc`, `.env*`, `fnox.local.toml` are hidden.
+- (d) git with a read-only `.git/config` and `.git/hooks`: what breaks (`push -u`).
+- (e) A symlink escape fails.
+- (f) Egress allowlist, with the role named in the error.
+- (g) HTTPS push with an injected token; the token is not visible in the guest.
+- (h) A built-in-tools-in-VM pi session starts in under 2 s with mise and node.
+- (i) Optional: k3s through MITM.
+- (j) pi-subagents children run their bash in the VM.
+- (k) pi-hang-guard composes with the VM bash tool.
 
-### M1: Spikes on the Mac (throwaway scripts in `artifacts/`, outcome-only output)
-Gondolin host script, scratch repo:
-- (a) repos/ files read-only: an edit fails with `EROFS`, and `git checkout` in `repos/<r>` fails.
-- (b) `git worktree add` from `repos/<r>` works, and commit in the worktree works.
-- (c) `.pi`, `.envrc`, `.env*`, `fnox.local.toml` are invisible (ls, stat, open, create) via ShadowProvider. Also check that `node_modules` hiding is configurable.
-- (d) `.git/config` and `.git/hooks` are read-only, and `git config core.fsmonitor x` fails. Check what breaks (`push -u`).
-- (e) Symlink created in a worktree pointing to `/Users/...` can't be read from the guest.
-- (f) Egress: an allowlisted host works, any other host fails, and the error text can carry the role hint.
-- (g) Secret: `git push` over HTTPS to a scratch GitHub repo works with an injected token, and the token is absent from guest env, files and `/proc`.
-- (h) A built-in-tools-in-VM pi session (pi-gondolin example) runs `mise`/`node` from a Debian/Fedora image, and VM start is under 2 s.
-- (i) k3s through MITM (optional, gap 6).
-- (j) pi-subagents children run their bash in the VM, not on the host (gap 1a).
-- (k) pi-hang-guard aborts a silent `sleep 600` run through the VM bash tool.
-Delivered as one script, `pi-projects/scripts/spike-sandbox.mjs`, that prints PASS or FAIL per check. Bryan or a laptop session runs it.
-Exit: each check passes or the design changes.
+### M2: Roles and grants in pi-projects (any machine; unit-tested) — can start now
+- Grant file schema and signature verification (`ssh-keygen -Y verify`, with the allowed-signers path supplied by the environment).
+- `/project grant`, which signs on the Mac.
+- Role loader from `origin/<default>:.pi/roles/<role>.yaml`.
+- Secret sources and host groups in global config.
+- Granted roles injected into the session prompt. `/project roles` shows grants, signature state and missing secret sources.
+- `project.json` writes keep unknown keys, re-reading the file at `store.ts:142,148,267`.
 
-### M2: Roles and grants in pi-projects (pure code, unit-tested; can be built from any machine)
-- `project.json` sections: pi-projects owns `repos` and `roles`, and pi-mounts reads `mounts` itself. No plugin registry (shortcut: add one when a third extension needs a section). Requirement: every write keeps unknown top-level keys. `loadProject`/`saveProject` already spread them, but `store.ts:142, 148, 267` save an in-memory copy without re-reading, which can drop keys pulled in by the state repo. Make them re-read first, and test that.
-- Role loader: `<repo>/.pi/roles/<role>.yaml` read via `git show <default-branch>:.pi/roles/<role>.yaml`, so it reads main, not whatever is checked out. Schema: `egress[]`, `secrets{NAME:{hosts[]}}`, `broker{}` (parsed, unused).
-- Global config: `~/.pi/agent/pi-roles.json`, with secret sources keyed `<repo>/<role>` (`op://`, `fnox:`, `env:`, and later `k8s:`), plus host groups (`tooling`).
-- Local grant approval (gap 3): `~/.pi/agent/pi-roles-approved.json` holds the project id, a hash of the grant list, and a timestamp.
-- Session start: inject the granted roles into the prompt. `/project roles` shows grants, approval state, and missing secret sources.
-- Tests: schema, grant resolution, approval required after a synced change, and role read from main rather than from a dirty checkout.
+### M3: pi-mounts, the sandboxed interactive session on the Mac
+- Gondolin VM per session at module level, keyed by project and role.
+- Built-in tools run in the VM, plus the per-role tool policy.
+- Egress and secrets come from the role.
+- Opt-in per project at first.
+- Verify: the M1 checks as tests, plus one real worktree change end to end. pi-sync, pi-projects and pi-background still work from the host.
 
-### M3: pi-mounts, the sandboxed session on the Mac (new repo `pi-mounts`)
-- Owns the `mounts` section. Starts one Gondolin VM per session with the project layout (gap answers 1, 2, 7). Overrides built-in tools via `Operations`, applies the host-tool allowlist, and builds egress plus secrets from the session's role (`PI_ROLE` or `roles.default`) and resolves secret sources on the host.
-- Opt-in per project at first (`mounts` present means sandboxed). It becomes the default only after it's been used for real.
-- Errors name the role that has a blocked host or missing secret.
-- Verify: the M1 checks rerun as automated tests through the extension, plus one real session doing a small change in a worktree end to end. Also check that pi-sync, pi-projects and pi-background still work (lock, sync, checkout sync from the host).
+### M4: role_agent on the Mac
+- Check the signed grant, then start a run with `PI_ROLE` through the runner (open question 3), and return the run id.
+- Report the result back to the caller.
+- Verify:
+  - an ungranted or unsigned role is refused;
+  - a granted role pushes a branch;
+  - the session is listed and the result returned;
+  - stop and continue work.
 
-### M4: role_agent (Mac)
-- pi-projects tool `role_agent(role, task, cwd?)`: checks the grant and approval, then calls pi-background to start a new session in the project with `PI_ROLE`, and returns at once with the run id.
-- On finish, the result (the last assistant text, plus status done, stopped, error or waiting) goes back to the calling session as a message, or as a notice if that session is closed. The run shows in `/bg list` and `/project`.
-- Install and configure pi-hang-guard (`mode: guard`).
-- This is the doc's open check 4 ("a host-started pi takes a role").
-- Verify, end to end on the laptop: (a) a sandboxed default agent can't reach api.github.com with a token, (b) it dispatches `pi-web/pi-web-developer`, (c) the child pushes a branch in a worktree, (d) the result returns and the session is listed, (e) an ungranted role is refused with a clear error, (f) a dialog in the child surfaces as "waiting on you", (g) stop and continue work.
+### M5: Web (Phase 1b)
+- Scoped GitHub tokens for workers (open question 1).
+- Gateway: dispatch-role endpoint with signature plus `WORKSPACED_GRANTS` checks, and role workers.
+- infra PR: an allowed-signers Secret and the first role's grant.
+- Verify:
+  - a web agent can't push to dotfiles or another repo;
+  - dispatching a granted role works;
+  - an unsigned grant is refused by the gateway.
 
-### M5: Web role workers (pi-web plus an infra PR)
-- Gateway: workspace create accepts `{project, role}`, maps the role to a grant name, and refuses unless the grant exists and allows the project's repo. Worker naming is `ws-<project>--<role>`.
-- pi-web worker route to start a session with a task in the project folder (reuse POST /api/pi-projects sessions plus message). `role_agent` on a web worker calls it through the gateway (needs a worker-to-gateway credential scoped to "start role sessions for my project" and a new auth path; design it here).
-- infra PR: grant `pi-web-developer` (Secret with GH_TOKEN, egress label).
-- Verify: from a web project session, dispatch the role. The role worker wakes, runs, and pushes a branch. The session appears in the project (pi-sync). An ungranted role or a missing gateway grant is refused.
+### M6: Docs and memory.
 
-### M6: Docs and memory
-- Update `agent-roles.md` (decisions, removed pi-retry, runner = pi-background, web limits), memory.md, and the repo READMEs.
+## Phase 1.5: OpenShell spike (injection-level parity on web)
+Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, and an Anthropic OAuth provider with refresh.
+If it works, worker pods become OpenShell sandboxes, which overlaps with and could replace parts of pi-workspaced.
+Risks: 0.1.x, a CRD and controller to run. Not on the Mac (agent-inside means the TUI attaches to a container).
 
-## Out of Phase 1
-Egress proxy, the Job backend, the broker, sandboxing the web project agent (needs KVM or another isolation), pi-heartbeat with monit/systemd, a separate agent GitHub identity, and the cluster caches (Phase 2).
-
-## Phase 2 hooks to keep open
-Tool cache path configurable per role (`MISE_SHARED_INSTALL_DIRS`), the image chosen per role, and a git `--reference` option in clone code.
+## Open questions
+1. **Web GitHub scoping:** a GitHub App (installation tokens limited to the project's repos, minted per worker) or a
+   per-project fine-grained PAT? Either needs Bryan to create it.
+2. **State repo:** it's one repo for all projects, so a web agent could still edit other projects' memory and repo lists (grants are
+   safe once signed). Accept, or split the state repo per project?
+3. **Role-run runner on the Mac:** pi-background's runner or the doc's pi-role CLI with monit? Does a blocked run end
+   "blocked: needs X" or wait for Bryan?
+4. **First role:** `pi-web/pi-web-developer` (GitHub only) or infra?
+5. Optional: branch protection on `main` for agent-pushed repos (mistaken pushes to main are the remaining risk).
