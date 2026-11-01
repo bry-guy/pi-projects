@@ -1,7 +1,7 @@
 # Phase 1 (agent roles and sandboxing): implementation and verification plan
 
 Source design: [agent-roles.md](agent-roles.md). Phase 2 is [cluster-caches.md](cluster-caches.md), to be defined later.
-Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review; decisions at the end. Nothing is built yet. `agent-roles.md` will be updated once the open questions are answered.
+Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review; decisions at the end. Nothing is built yet. `agent-roles.md` gets updated to match in M6.
 
 ## Goal and threat model
 
