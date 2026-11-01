@@ -1,8 +1,7 @@
 # Phase 1 (agent roles and sandboxing): implementation and verification plan
 
 Source design: [agent-roles.md](agent-roles.md). Phase 2 is [cluster-caches.md](cluster-caches.md), to be defined later.
-Status: draft, revised 2026-11-01 after Bryan's feedback and advisor review. **Open questions at the end.** Only M2 has
-started. `agent-roles.md` will be updated once the open questions are answered.
+Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review; decisions at the end. Nothing is built yet. `agent-roles.md` will be updated once the open questions are answered.
 
 ## Goal and threat model
 
@@ -73,7 +72,7 @@ become workflow conveniences once grants are signed and roles are read from `ori
 Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1, M3 and M4 need a laptop session.
 
 ### M0: Decisions
-- The open questions below are answered, and `agent-roles.md` is updated.
+- Decisions recorded (below). Update `agent-roles.md` to match (with M6).
 
 ### M1: Mac spikes (`scripts/spike-sandbox.mjs`, prints PASS or FAIL per check, run on the laptop)
 - (a) repos/ read-only, so an edit fails.
@@ -104,7 +103,8 @@ Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1
 - Verify: the M1 checks as tests, plus one real worktree change end to end. pi-sync, pi-projects and pi-background still work from the host.
 
 ### M4: role_agent on the Mac
-- Check the signed grant, then start a run with `PI_ROLE` through the runner (open question 3), and return the run id.
+- Check the signed grant, then start a run with `PI_ROLE` through pi-background's runner (decision 3), and return the run id.
+- pi-heartbeat extension and the monit check per run (decision 3). A blocked run waits (decision 4).
 - Report the result back to the caller.
 - Verify:
   - an ungranted or unsigned role is refused;
@@ -113,7 +113,7 @@ Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1
   - stop and continue work.
 
 ### M5: Web (Phase 1b)
-- Scoped GitHub tokens for workers (open question 1).
+- GitHub App installation tokens for workers, limited to the project's repos plus the state repo (decision 1).
 - Gateway: dispatch-role endpoint with signature plus `WORKSPACED_GRANTS` checks, and role workers.
 - infra PR: an allowed-signers Secret and the first role's grant.
 - Verify:
@@ -128,12 +128,19 @@ Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, a
 If it works, worker pods become OpenShell sandboxes, which overlaps with and could replace parts of pi-workspaced.
 Risks: 0.1.x, a CRD and controller to run. Not on the Mac (agent-inside means the TUI attaches to a container).
 
-## Open questions
-1. **Web GitHub scoping:** a GitHub App (installation tokens limited to the project's repos, minted per worker) or a
-   per-project fine-grained PAT? Either needs Bryan to create it.
-2. **State repo:** it's one repo for all projects, so a web agent could still edit other projects' memory and repo lists (grants are
-   safe once signed). Accept, or split the state repo per project?
-3. **Role-run runner on the Mac:** pi-background's runner or the doc's pi-role CLI with monit? Does a blocked run end
-   "blocked: needs X" or wait for Bryan?
-4. **First role:** `pi-web/pi-web-developer` (GitHub only) or infra?
-5. Optional: branch protection on `main` for agent-pushed repos (mistaken pushes to main are the remaining risk).
+## Decisions (Bryan, 2026-11-01)
+1. **Web GitHub scoping: a GitHub App.** The front end mints short-lived installation tokens limited to the project's repos
+   plus the state repo, per worker. Bryan creates the App.
+2. **State repo stays shared.** With grants signed in dotfiles it holds only `project.json` (id, name, repos) and `memory.md`,
+   so cross-project edits are recoverable from git history. Background: the state repo (decided 2026-10-30, Portable
+   Projects) exists because pi-sync syncs only sessions, and a session needs its project (memory, repo list) on every machine.
+3. **Mac role runs: the pi-background runner, supervised by monit, with a pi-heartbeat extension.** No separate role CLI.
+   - pi-heartbeat writes a heartbeat file from pi's event loop.
+   - The runner registers a monit check per run (`check file ... if timestamp > 10 minutes then exec <stop>`) and removes it at the end.
+   - A stopped stale run is recorded as `stalled`.
+   - pi-hang-guard handles stuck tool calls inside pi.
+4. **Blocked role runs wait indefinitely** for Bryan (forwarded dialog, "waiting on you", `/bg` to answer). Keep-awake is
+   released while waiting, and the heartbeat keeps running so a waiting run isn't counted as stalled. This replaces the doc's "ask
+   tools disabled; ends blocked".
+5. **Roles: both. `pi-web/pi-web-developer` first, then `infra/infra-developer`** (needs the k3s API spike, M1(i)).
+6. Still open: branch protection on `main` for agent-pushed repos.
