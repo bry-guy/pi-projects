@@ -1,0 +1,35 @@
+# OpenShell provider profile: Claude subscription OAuth, refreshed by the gateway.
+# The sandbox sees only a placeholder in OPENSHELL_ANTHROPIC_PLACEHOLDER; the
+# openshell-oauth.ts pi extension sends it as `Authorization: Bearer <placeholder>`.
+id: anthropic-oauth
+display_name: Anthropic (Claude subscription OAuth)
+description: Claude subscription login; the gateway holds and rotates the refresh token
+category: inference
+inference_capable: true
+credentials:
+  - name: access_token
+    description: Anthropic OAuth access token (minted by the gateway)
+    env_vars: [OPENSHELL_ANTHROPIC_PLACEHOLDER]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_refresh_token
+      token_url: https://platform.claude.com/v1/oauth/token
+      refresh_before: "600s"
+      material:
+        - name: client_id
+          description: pi's Anthropic OAuth client id
+          required: true
+          secret: false
+        - name: refresh_token
+          description: refresh token from a dedicated `pi /login`
+          required: true
+          secret: true
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/bin/node]
