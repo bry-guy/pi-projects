@@ -1,7 +1,12 @@
-# Phase 1 (agent roles and sandboxing): implementation and verification plan
+# Agent roles and sandboxing: implementation and verification plan
 
-Source design: [agent-roles.md](agent-roles.md). Phase 2 is [cluster-caches.md](cluster-caches.md), to be defined later.
-Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review; decisions at the end. Nothing is built yet. `agent-roles.md` gets updated to match in M6.
+Source design: [agent-roles.md](agent-roles.md).
+
+Phases (reordered 2026-11-02 by Bryan):
+1. **Phase 1, local (Mac):** Gondolin sandbox, roles and grants, role runs, secret broker. Built and finished first.
+2. **Phase 2, web:** the OpenShell spike (paused; kit in `spikes/openshell`), then web roles and scoped GitHub tokens.
+3. **Phase 3, cluster caches:** [cluster-caches.md](cluster-caches.md), to be defined later.
+Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review, phases reordered 2026-11-02; decisions at the end. Nothing is built yet. `agent-roles.md` gets updated to match in M6.
 
 ## Goal and threat model
 
@@ -13,7 +18,7 @@ Phase 1 is about **mistakes**: an agent with good intentions misusing access it 
 4. Agent GitHub write is scoped to the project's repos.
 
 Hostname egress allowlists and secret placeholders mainly defend against **injection**: exfiltration, or content that steers
-the agent. They're the Phase 1.5 "parity with Gondolin" ideal, not Phase 1 requirements.
+the agent. On the Mac Gondolin gives them anyway. On web they're the Phase 2 "parity with Gondolin" goal.
 
 Agent-written code running (tests, hooks) is accepted, since agents run code anyway. Read-only repos and hidden `.pi`
 become workflow conveniences once grants are signed and roles are read from `origin`.
@@ -40,12 +45,12 @@ become workflow conveniences once grants are signed and roles are read from `ori
   - L7 rules by host, path and binary, including per-repo `git-receive-pack`.
   - Landlock filesystem allowlists.
   - Runs on Docker/Podman, a microVM driver, or Kubernetes (Agent Sandbox SIG CRDs and controller; no privileged pods).
-  We won't build our own; see Phase 1.5.
+  We won't build our own; see Phase 2.
 - pi CLI has `--tools`/`--exclude-tools`. pi has built-in retry, so drop `@narumitw/pi-retry` from the design.
 
 ## Design changes from agent-roles.md
 
-1. **On web, the worker pod is the sandbox.** No executor pods, no Jobs and no proxy of our own in Phase 1.
+1. **On web (Phase 2), the worker pod is the sandbox.** No executor pods, no Jobs and no proxy of our own. OpenShell may change this.
    - **Default web agent:** the project worker with no infra grant. Bryan's GitHub OAuth is removed from workers and
      replaced by a **token scoped to the project's repos plus the state repo**, minted by the trusted front end. Dotfiles
      and other repos become unpushable from web.
@@ -69,7 +74,9 @@ become workflow conveniences once grants are signed and roles are read from `ori
 
 ## Milestones
 
-Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1, M3 and M4 need a laptop session.
+### Phase 1: local (Mac)
+
+M0-M6. M1, M3, M4 and M5 need a laptop session. M2 can be built anywhere.
 
 ### M0: Decisions
 - Decisions recorded (below). Update `agent-roles.md` to match (with M6).
@@ -112,7 +119,30 @@ Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1
   - the session is listed and the result returned;
   - stop and continue work.
 
-### M5: Web (Phase 1b)
+### M5: Secret broker on the Mac (from pi-ez-secret-broker)
+- HTTP secrets need no broker: Gondolin injects them per host as placeholders (M1(g)), which covers the first role's `GH_TOKEN`.
+- The broker covers the role yaml's `broker:` actions for non-HTTP credentials. It runs on the host, holds the secret,
+  and the VM only sends a request. First actions: what `infra-developer` needs (`tofu plan`, then k3s if M1(i) fails).
+  Later: S3 signing, read-only Postgres.
+- pi-ez-secret-broker v0.2.0 brokers only bearer-token HTTP and Proxmox; port it into pi-mounts or keep it a separate
+  package (decide when starting M5).
+- Verify:
+  - a declared `auto` action runs, and the guest never sees the secret;
+  - an undeclared action, or one for an ungranted role, is refused;
+  - secrets resolve from global config (`op://`), and a missing source is reported by `/project roles`.
+
+### M6: Docs and memory
+Update `agent-roles.md` to match. Phase 1 is done when `pi-web-developer` and `infra-developer` role runs work on the Mac.
+
+## Phase 2: web (paused until Phase 1 is done)
+
+### W1: OpenShell spike (injection-level parity on web)
+Kit ready in `spikes/openshell` (tests only our setup: login rotation, the pi shim through the real proxy, the worker
+image with our disk and SSE, pi-syncd). Runs from the laptop with admin approval.
+If it works, workspaced gets an `openshell` provider next to `local` and `kubernetes` (same API, so web is unchanged);
+the costs are allow-only egress for workers, placeholder logins, and moving worker disks.
+
+### W2: Web roles (was M5)
 - GitHub App installation tokens for workers, limited to the project's repos plus the state repo (decision 1).
 - Gateway: dispatch-role endpoint with signature plus `WORKSPACED_GRANTS` checks, and role workers.
 - infra PR: an allowed-signers Secret and the first role's grant.
@@ -121,9 +151,13 @@ Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1
   - dispatching a granted role works;
   - an unsigned grant is refused by the gateway.
 
-### M6: Docs and memory.
+Shape depends on W1: role workers on today's provider, or OpenShell sandboxes with providers and policy.
 
-## Phase 1.5: OpenShell spike (injection-level parity on web)
+### W3: Model login hardening
+Workers can refresh a shared OAuth token on their own (read-only `auth.json`), which would sign everything out. Fix
+independently (workers never refresh), or remove it with OpenShell's gateway login.
+
+### W1 background: OpenShell notes
 Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, and an Anthropic OAuth provider with refresh.
 If it works, worker pods become OpenShell sandboxes, which overlaps with and could replace parts of pi-workspaced.
 Risks: 0.1.x, a CRD and controller to run. Not on the Mac (agent-inside means the TUI attaches to a container).
@@ -156,6 +190,9 @@ Model login through OpenShell (from code reading, 2026-11-01; unverified):
   - k3s install (Agent Sandbox CRDs, NetworkPolicy enforcement).
 - Fallback without OpenShell: the trusted front end holds the refresh token and hands workers short-lived access tokens.
   The agent can read the access token but never the refresh token.
+
+## Phase 3: cluster caches
+See [cluster-caches.md](cluster-caches.md). Not scheduled.
 
 ## Decisions (Bryan, 2026-11-01)
 1. **Web GitHub scoping: a GitHub App.** The front end mints short-lived installation tokens limited to the project's repos
