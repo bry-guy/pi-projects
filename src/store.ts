@@ -82,9 +82,17 @@ function writeJsonAtomic(file: string, data: unknown): void {
 	renameSync(tmp, file);
 }
 
+/** Merges over the file on disk, so keys this copy never loaded (e.g. pulled from the state repo) survive. */
 export function saveProject(p: Project): void {
 	const { path, ...data } = p;
-	writeJsonAtomic(join(path, "project.json"), data);
+	const file = join(path, "project.json");
+	let disk: Record<string, unknown> = {};
+	try {
+		disk = JSON.parse(readFileSync(file, "utf8"));
+	} catch {
+		// new or unreadable: write ours
+	}
+	writeJsonAtomic(file, { ...disk, ...data });
 }
 
 export function loadProject(path: string): Project {

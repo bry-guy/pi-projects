@@ -35,11 +35,50 @@ import {
 	setState,
 	shareState,
 } from "./store.ts";
+import {
+	agentKeys,
+	allowedSignersFile,
+	type GrantsFile,
+	loadRole,
+	readGrants,
+	type SessionRole,
+	saveSignedGrants,
+	sessionRole,
+	trustedGrants,
+	validateRoleId,
+	writeTrustAnchor,
+} from "./roles.ts";
+import * as roles from "./roles.ts";
+import * as store from "./store.ts";
+
+/** For pi-mounts and pi-secret-broker, which run in the same pi process. */
+const API = Symbol.for("pi-projects.v1");
+(globalThis as any)[API] = { ...store, ...roles };
 
 const ENTRY = "pi-project";
 const STATUS = "pi-project";
 
-function buildSection(p: Project): string {
+function roleLines(r: SessionRole | undefined): string[] {
+	if (!r) return [];
+	const out: string[] = [];
+	if (r.sandbox) {
+		out.push(
+			"",
+			"Sandbox: your tools run in a VM. repos/<repo> main checkouts are read-only; make changes in a worktree",
+			"(project_worktree). Network access is limited to an allowlist; a 403 'blocked by policy' means the host is not allowed.",
+		);
+	}
+	if (r.roleId) out.push(`Role: ${r.roleId}${r.role?.description ? ` (${r.role.description})` : ""}.`);
+	const others = (r.grant?.roles ?? []).filter((x) => x !== r.roleId);
+	if (others.length) out.push(`Granted roles you can delegate to with role_agent: ${others.join(", ")}.`);
+	if (r.role?.broker && Object.keys(r.role.broker).length) {
+		out.push(`Host actions (broker_run): ${Object.entries(r.role.broker).map(([k, a]) => `${k}${a.description ? ` (${a.description})` : ""}`).join(", ")}.`);
+	}
+	if (r.problem) out.push(`Roles: ${r.problem}.`);
+	return out;
+}
+
+function buildSection(p: Project, r?: SessionRole): string {
 	const ws = scanWorkspace(p);
 	const lines = [
 		`You are working in pi project "${p.name}"${p.state === "archived" ? " (archived, read-only)" : ""} at ${p.path}.`,
@@ -50,6 +89,7 @@ function buildSection(p: Project): string {
 		"- A repo's own AGENTS.md is not loaded automatically from the project root; read it before working in that repo.",
 		`Repos: ${ws.repos.length ? ws.repos.map((r) => `repos/${r}`).join(", ") : "(none)"}`,
 		`Worktrees: ${ws.worktrees.length ? ws.worktrees.map((w) => `worktrees/${w}`).join(", ") : "(none)"}`,
+		...roleLines(r),
 	];
 	if (p.memory.enabled) {
 		lines.push(
@@ -92,9 +132,11 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	const refresh = (ctx: ExtensionContext) => {
+	let role: SessionRole | undefined;
+	const refresh = (ctx: ExtensionContext, { roleFetch = false } = {}) => {
 		current = projectForCwd(ctx.cwd);
-		section = current ? buildSection(current) : undefined;
+		role = current ? sessionRole(current, process.env, { fetch: roleFetch }) : undefined;
+		section = current ? buildSection(current, role) : undefined;
 		ctx.ui.setStatus(STATUS, current ? `project: ${current.name}${current.state === "archived" ? " (archived)" : ""}` : undefined);
 	};
 
@@ -106,7 +148,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		ui = ctx.ui;
-		refresh(ctx);
+		refresh(ctx, { roleFetch: true });
 		if (!current) return;
 		if (isStateRepo()) {
 			// Pull other machines' memory and repo list without delaying the start; reload when it lands.
@@ -317,11 +359,91 @@ export default function (pi: ExtensionAPI) {
 			const ps = listProjects();
 			ctx.ui.notify(ps.length ? ps.map((p) => `${p.name}${p.state === "archived" ? " (archived)" : ""}`).join("\n") : "No projects.", "info");
 		},
+		async roles(_arg, ctx) {
+			const p = requireProject();
+			const { grants, problem } = trustedGrants();
+			const g = grants.projects[p.id];
+			const lines = [`Trust anchor: ${allowedSignersFile()}`, `Grants: ${problem ?? "signed"}`];
+			lines.push(`Sandbox: ${g?.sandbox ? "on" : "off"}${role?.sandbox && !g?.sandbox ? " (on for this session)" : ""}`);
+			for (const id of g?.roles ?? []) {
+				let state = "ok";
+				try {
+					const r = loadRole(p, id, { fetch: false });
+					const missing = Object.keys({ ...r.secrets }).concat(...Object.values(r.broker ?? {}).map((a) => a.env ?? [])).filter((n) => !grants.sources[id]?.[n]);
+					if (missing.length) state = `no source for ${[...new Set(missing)].join(", ")}`;
+				} catch (e) {
+					state = (e as Error).message;
+				}
+				lines.push(`${id}${g?.default === id ? " (default)" : ""}: ${state}`);
+			}
+			if (!g?.roles.length) lines.push("No roles granted. /project grant <repo>/<role>");
+			ctx.ui.notify(lines.join("\n"), problem ? "warning" : "info");
+		},
+		async grant(arg, ctx) {
+			const p = requireProject();
+			const [id, ...flags] = arg.split(/\s+/).filter(Boolean);
+			if (!id) throw new Error("Usage: /project grant <repo>/<role> [--default]");
+			validateRoleId(id);
+			loadRole(p, id); // must exist on origin
+			const g = await editableGrants(ctx);
+			if (!g) return;
+			const cur = g.projects[p.id] ?? { name: p.name, roles: [] };
+			cur.name = p.name;
+			if (!cur.roles.includes(id)) cur.roles.push(id);
+			if (flags.includes("--default")) cur.default = id;
+			g.projects[p.id] = cur;
+			saveSignedGrants(g);
+			refresh(ctx);
+			ctx.ui.notify(`Granted ${id} to ${p.name}${cur.default === id ? " (default)" : ""}`, "info");
+		},
+		async ungrant(arg, ctx) {
+			const p = requireProject();
+			const g = await editableGrants(ctx);
+			const cur = g?.projects[p.id];
+			if (!g || !cur) return;
+			cur.roles = cur.roles.filter((r) => r !== arg.trim());
+			if (cur.default === arg.trim()) delete cur.default;
+			saveSignedGrants(g);
+			refresh(ctx);
+			ctx.ui.notify(`Removed ${arg.trim()} from ${p.name}`, "info");
+		},
+		async sandbox(arg, ctx) {
+			const p = requireProject();
+			if (arg !== "on" && arg !== "off") throw new Error("Usage: /project sandbox on|off");
+			const g = await editableGrants(ctx);
+			if (!g) return;
+			g.projects[p.id] = { ...(g.projects[p.id] ?? { name: p.name, roles: [] }), sandbox: arg === "on" };
+			saveSignedGrants(g);
+			refresh(ctx);
+			ctx.ui.notify(`Sandbox ${arg} for ${p.name}. New sessions pick it up; /reload this one.`, "info");
+		},
 		async doctor(_arg, ctx) {
 			const issues = doctor();
 			ctx.ui.notify(issues.length ? issues.join("\n") : "No issues found.", issues.length ? "warning" : "info");
 		},
 	};
+
+	/** The grants file to edit, after setting up the trust anchor and refusing to build on a tampered file. */
+	async function editableGrants(ctx: ExtensionCommandContext): Promise<GrantsFile | undefined> {
+		if (process.env.PI_ROLE) throw new Error("Role runs can't change grants.");
+		if (!existsSync(allowedSignersFile())) {
+			const [key] = agentKeys();
+			if (!key) throw new Error("No SSH key in the agent to sign grants with (1Password SSH agent).");
+			const ok = await ctx.ui.confirm(
+				"Set up grant signing",
+				`Trust ${key.split(" ").slice(0, 2).join(" ").slice(0, 60)}… (${key.split(" ")[2] ?? ""}) to sign role grants? Stored in ${allowedSignersFile()}.`,
+			);
+			if (!ok) return undefined;
+			writeTrustAnchor(key);
+		}
+		const g = readGrants();
+		const { problem } = trustedGrants();
+		if (g.signature && problem) {
+			const ok = await ctx.ui.confirm("Grants changed outside /project", `${problem}. Re-sign the file as it is now?`);
+			if (!ok) return undefined;
+		}
+		return g;
+	}
 
 	pi.registerCommand("project", {
 		description: `Pi projects: /project [${Object.keys(sub).join("|")}] [args]`,

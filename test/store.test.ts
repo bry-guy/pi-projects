@@ -149,3 +149,12 @@ test("sessionTitle prefers name, then first user message", () => {
 	writeFileSync(file, readFileSync(file, "utf8") + `${JSON.stringify({ type: "session_info", name: "Named" })}\n`);
 	assert.equal(s.sessionTitle(file), "Named");
 });
+
+test("saves keep keys written to project.json after this copy was loaded", () => {
+	const p = s.createProject("keep");
+	const file = join(p.path, "project.json");
+	writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), extra: { a: 1 } }));
+	s.setState(p, "archived");
+	const disk = JSON.parse(readFileSync(file, "utf8"));
+	assert.deepEqual([disk.state, disk.extra], ["archived", { a: 1 }]);
+});
