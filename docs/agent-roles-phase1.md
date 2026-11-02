@@ -127,6 +127,21 @@ Phase 1a is the Mac plus the shared pieces (M0-M4, M6). Phase 1b is web (M5). M1
 Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, and an Anthropic OAuth provider with refresh.
 If it works, worker pods become OpenShell sandboxes, which overlaps with and could replace parts of pi-workspaced.
 Risks: 0.1.x, a CRD and controller to run. Not on the Mac (agent-inside means the TUI attaches to a container).
+The Mac stays on Gondolin (decided).
+
+Model login through OpenShell (from code reading, 2026-11-01; unverified):
+- "The gateway" here is OpenShell's own gateway (`openshell-server`, its own store), not pi-workspaced. The gateway holds
+  the refresh token and mints access tokens. The sandbox supervisor's proxy injects them into matching requests. pi sees
+  only a placeholder.
+- Rotated refresh tokens are stored (`provider_refresh.rs:1175-1245`).
+- The gateway needs **its own login**. A refresh token shared with the laptop or the worker breaks when one side rotates it.
+- **Check 1:** OpenShell refreshes with a form-encoded POST. pi's Anthropic refresh POSTs JSON to
+  `platform.claude.com/v1/oauth/token`. Does that endpoint accept a form body? Codex (`auth.openai.com`) uses form and should work.
+- **Check 2:** pi picks OAuth mode only if the key contains `sk-ant-oat` (`anthropic-messages.js:781`). A placeholder
+  won't, so pi would send `x-api-key` and the wrong request shape. This needs a small extension or provider override that
+  forces OAuth mode, with the token injected as `Authorization: Bearer` (token grant, `auth_style: bearer`).
+- Fallback without OpenShell: the trusted front end holds the refresh token and hands workers short-lived access tokens.
+  The agent can read the access token but never the refresh token.
 
 ## Decisions (Bryan, 2026-11-01)
 1. **Web GitHub scoping: a GitHub App.** The front end mints short-lived installation tokens limited to the project's repos
