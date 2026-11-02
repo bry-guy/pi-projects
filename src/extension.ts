@@ -409,6 +409,30 @@ export default function (pi: ExtensionAPI) {
 			refresh(ctx);
 			ctx.ui.notify(`Removed ${arg.trim()} from ${p.name}`, "info");
 		},
+		async source(arg, ctx) {
+			const [id, name, source] = arg.split(/\s+/).filter(Boolean);
+			if (!id || !name) throw new Error("Usage: /project source <repo>/<role> <NAME> [keychain:<svc>|op://...|env:X|file:path|value:text] (no source removes it)");
+			validateRoleId(id);
+			if (source && !/^(keychain|op|env|file|value):/.test(source)) throw new Error(`Unknown source "${source}"`);
+			const g = await editableGrants(ctx);
+			if (!g) return;
+			g.sources[id] = { ...g.sources[id] };
+			if (source) g.sources[id][name] = source;
+			else delete g.sources[id][name];
+			saveSignedGrants(g);
+			refresh(ctx);
+			ctx.ui.notify(source ? `${id}: ${name} from ${source.split(":")[0]}` : `${id}: removed ${name}`, "info");
+		},
+		async sign(_arg, ctx) {
+			const g = await editableGrants(ctx, { reviewed: true });
+			if (!g) return;
+			const lines = Object.values(g.projects).map((x) => `${x.name}: ${x.roles.join(", ") || "no roles"}${x.default ? ` (default ${x.default})` : ""}${x.sandbox ? ", sandbox on" : ""}`);
+			for (const [id, src] of Object.entries(g.sources)) lines.push(`${id} sources: ${Object.entries(src).map(([k, v]) => `${k}=${v.startsWith("value:") ? v : v.split(":")[0]}`).join(", ")}`);
+			if (!(await ctx.ui.confirm("Sign role grants", `${lines.join("\n")}\n\nSign this file?`))) return;
+			saveSignedGrants(g);
+			refresh(ctx);
+			ctx.ui.notify("Grants signed.", "info");
+		},
 		async sandbox(arg, ctx) {
 			const p = requireProject();
 			if (arg !== "on" && arg !== "off") throw new Error("Usage: /project sandbox on|off");
@@ -426,7 +450,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	/** The grants file to edit, after setting up the trust anchor and refusing to build on a tampered file. */
-	async function editableGrants(ctx: ExtensionCommandContext): Promise<GrantsFile | undefined> {
+	async function editableGrants(ctx: ExtensionCommandContext, { reviewed = false } = {}): Promise<GrantsFile | undefined> {
 		if (process.env.PI_ROLE) throw new Error("Role runs can't change grants.");
 		if (!existsSync(allowedSignersFile())) {
 			const [key] = agentKeys();
@@ -440,7 +464,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		const g = readGrants();
 		const { problem } = trustedGrants();
-		if (g.signature && problem) {
+		if (g.signature && problem && !reviewed) {
 			const ok = await ctx.ui.confirm("Grants changed outside /project", `${problem}. Re-sign the file as it is now?`);
 			if (!ok) return undefined;
 		}

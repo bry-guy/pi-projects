@@ -1,6 +1,7 @@
 # Agent roles and sandboxed projects
 
-Status: design, not built. Implementation plan and open questions: [agent-roles-plan.md](agent-roles-plan.md).
+Status: Phase 1 (Mac) built 2026-11-02; see [agent-roles-plan.md](agent-roles-plan.md) for what's built, how it differs
+from this design (role files are JSON; the stall heartbeat lives in pi-background's runner), and what's next.
 
 ## Problem
 
@@ -10,7 +11,7 @@ Status: design, not built. Implementation plan and open questions: [agent-roles-
 
 ## Model
 
-- **Repos define roles.** Repos are permanent, so a role lives with its repo in `.pi/roles/<role>.yaml`. A role lists egress hosts, secret names (not values) and broker actions.
+- **Repos define roles.** Repos are permanent, so a role lives with its repo in `.pi/roles/<role>.json`. A role lists egress hosts, secret names (not values) and broker actions.
 - **Projects grant roles.** A project is a short-lived grouping of repos for a goal. Its `project.json` lists which repo roles its agents may take on.
 - **One role per session.** Roles don't compose. The project agent (the one you talk to) runs as `roles.default` from `project.json`, which can be any granted role. With no default it runs sandboxed with no grants: a VM or pod with no role secrets and no role egress. To do another role's work it starts an agent as that role, with the task. That agent has its own VM or pod, egress and secrets, and reports back as text.
 - **No prompts for granted work.** Granting a role to a project is the decision. Anything the role allows runs without asking.
@@ -20,7 +21,7 @@ Status: design, not built. Implementation plan and open questions: [agent-roles-
 
 | What | Where | Changed by |
 |---|---|---|
-| Role definition (egress, secret names, broker actions) | `<repo>/.pi/roles/<role>.yaml` | a merge to the repo's `main` |
+| Role definition (egress, secret names, broker actions) | `<repo>/.pi/roles/<role>.json` | a merge to the repo's `main` |
 | Grant (which repo roles a project may use) | `project.json` (never mounted) | Bryan |
 | Secret sources (`GH_TOKEN` → `op://…` or a k8s Secret) | global pi config, keyed by repo role, e.g. `infra/infra-developer` | Bryan |
 | Shared pieces (the `tooling` host group, default image) | global pi config | Bryan |
@@ -30,21 +31,17 @@ Repo `AGENTS.md` `## Roles` sections stay as human documentation, not enforcemen
 
 ## Sketch
 
-```yaml
-# infra/.pi/roles/infra-developer.yaml
-egress:  [tooling, api.github.com, k3s:6443]
-secrets: { GH_TOKEN: { hosts: [api.github.com, github.com] } }
-broker:  { tofu: { plan: auto } }
-```
+Built as JSON (no YAML dependency). Real examples: pi-web `.pi/roles/pi-web-developer.json` and infra
+`.pi/roles/infra-developer.json` (generated from infra's task classification).
 
 ```json
-// project.json
-{
-  "repos":  [{ "name": "infra", "url": "…", "branch": "main" }],
-  "mounts": { "repos": "ro-files", "worktrees": "rw", "hide": [".pi", ".envrc", "fnox.local.toml", ".env*", "node_modules"] },
-  "roles":  { "default": "infra/infra-operator", "grant": ["infra/infra-operator", "infra/infra-developer"] }
-}
+{ "egress": ["api.cloudflare.com"],
+  "secrets": { "GH_TOKEN": { "hosts": ["github.com", "api.github.com"] } },
+  "broker": { "push": { "run": ["sh", "-c", "git push … HEAD:refs/heads/$0", "{branch}"], "args": { "branch": "agent/[a-z0-9./-]+" } } } }
 ```
+
+Grants and mounts don't live in `project.json` (agents can edit it): grants are in the signed
+`~/.pi/agent/pi-roles.json`, and mounts are fixed by pi-mounts.
 
 ## Boundaries
 

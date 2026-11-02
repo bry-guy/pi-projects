@@ -8,6 +8,33 @@ Phases (reordered 2026-11-02 by Bryan):
 3. **Phase 3, cluster caches:** [cluster-caches.md](cluster-caches.md), to be defined later.
 Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review, phases reordered 2026-11-02; decisions at the end. Nothing is built yet. `agent-roles.md` gets updated to match in M6.
 
+## Phase 1 status (2026-11-02)
+
+Built on the Mac. Repos: pi-projects (roles, signed grants, `role_agent`), pi-mounts (new, Gondolin sandbox),
+pi-secret-broker (renamed from pi-ez-secret-broker, rebuilt), pi-background (stall guard, `start()` API), pi-sync
+(host git without hooks/fsmonitor). Role files: pi-web `pi-web-developer`, infra `infra-developer` (branch
+`agent/role-file`, waiting on Bryan's merge).
+
+M1 checks (`pi-mounts/scripts/spike-sandbox.mjs`), all PASS except where noted:
+(a) repos read-only; (b) worktree add and commit; (c) hidden files; (d) `.git` writable, accepted; (e) symlink escape
+fails; (f) egress allowlist (`403 blocked by policy`); (g) placeholder token, `gh` and an HTTPS push work and the guest
+never sees the token; (h) boot ~0.9 s, node 22 via mise (musl, needs the upstream musl mise binary and the patched
+Gondolin); (i) k3s API is unreachable from the VM (tailnet IP), so kubectl is a broker action; (j) pi-subagents
+children run in the same VM when pi-mounts is installed as a package (not with `pi -e`); (k) pi-hang-guard isn't
+installed, skipped.
+
+Differences from the plan:
+- Role files are JSON, not YAML.
+- No separate pi-heartbeat extension: pi-background's runner writes the heartbeat on every pi RPC event (and while
+  waiting on you); a per-run monit check stops runs stale for 10 minutes (`stalled`).
+- Interactive sessions stay unsandboxed unless `/project sandbox on`; role runs are always sandboxed.
+- infra-developer Developer tasks (apply, build) ask Bryan first (`approve: ask`); Operator tasks run without asking.
+  Flip in `scripts/agent-role-file.py`.
+- Gondolin runs from a local build until the Accept-Encoding fix is upstream (PR prepared, not sent).
+
+Still to do by Bryan: create the pi-web-developer token and service account, merge infra `agent/role-file`, then
+`/project grant` / `/project source` / `/project sign` (Touch ID).
+
 ## Goal and threat model
 
 Phase 1 is about **mistakes**: an agent with good intentions misusing access it holds. What limits that:

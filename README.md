@@ -22,6 +22,24 @@ Sync projects across machines with `/project share <git-remote>` (once per machi
 
 See [docs/plan.md](docs/plan.md). Phase 1 (local projects) is implemented.
 
+## Roles and sandboxing (Mac)
+
+Design: [docs/agent-roles.md](docs/agent-roles.md). Needs [pi-mounts](https://github.com/bry-guy/pi-mounts) (Gondolin
+sandbox), [pi-secret-broker](https://github.com/bry-guy/pi-secret-broker) (secrets, host actions) and
+[pi-background](https://github.com/bry-guy/pi-background) (role runs).
+
+- A role is `<repo>/.pi/roles/<role>.json` (egress hosts, secrets with the hosts they're for, broker actions, extra host
+  tools), read from origin's default branch only, so it changes by a merge.
+- Grants are `~/.pi/agent/pi-roles.json`, signed with your SSH key (1Password agent, Touch ID). The trust anchor is
+  `~/.local/state/pi-roles/allowed_signers`, set up on first use. Unsigned or tampered grants count as none, and a
+  tampered file puts sessions in the sandbox.
+- `/project roles`: grants, signature, missing secret sources. `/project grant <repo>/<role> [--default]`,
+  `/project ungrant <repo>/<role>`, `/project source <repo>/<role> <NAME> <source>`, `/project sandbox on|off`,
+  `/project sign` (review and sign the file as it is). Each change signs once (one Touch ID).
+- `role_agent(role, task, cwd?)`: a fresh background session as a granted role, sandboxed, whose final reply comes
+  back to the caller as a message. Role runs can't change grants.
+- Host git run by pi-projects never runs repo hooks or fsmonitor (agents can write `.git`).
+
 ## Test
 
 ```sh
