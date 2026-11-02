@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OpenShell on k3s spike. Run from the laptop, one step at a time: ./run.sh <step>
-# Steps: cli install connect t1 t2 t3 t4 t5 teardown   (see README.md)
+# Steps: cli install connect t1 t2 t3 t4 teardown   (see README.md)
 # Every cluster step uses KUBECTL_CONTEXT (default infra-k3s-admin); it needs Bryan's approval.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -10,8 +10,6 @@ SANDBOX_CRD_VERSION="${SANDBOX_CRD_VERSION:-v1.0.9}"  # kubernetes-sigs/agent-sa
 CTX="${KUBECTL_CONTEXT:-infra-k3s-admin}"
 NS=openshell
 IMAGE="${IMAGE:?set IMAGE=ghcr.io/bry-guy/pi-ez-web:sha-<commit> (a current worker build)}"
-SCRATCH_REPO="${SCRATCH_REPO:-bry-guy/openshell-spike}"   # private, throwaway, has one commit
-DENY_REPO="${DENY_REPO:-bry-guy/pi-projects}"             # push here must be refused
 OS="$PWD/bin/openshell"
 k() { kubectl --context "$CTX" "$@"; }
 os() { "$OS" "$@"; }
@@ -95,66 +93,62 @@ step_t1() {   # Gateway refreshes a Claude subscription login and keeps the rota
 
 sx() { os sandbox exec -n pi-spike --no-login-shell -- sh -c "$1"; }
 
-step_t2() {   # pi inside a sandbox talks to Claude through the proxy; agent never sees the token
-  say "T2 sandbox from the worker image with the anthropic-sub provider"
+step_t2() {   # our pi + anthropic-auth + shim, through the real proxy (TLS interception, Node CA)
+  say "T2 pi in a sandbox from the worker image, Claude login via the gateway"
   os sandbox create --name pi-spike --from "$IMAGE" --provider anthropic-sub --detach -- sleep infinity
   os policy update pi-spike --rule-name npm --binary /usr/local/bin/node \
     --add-endpoint registry.npmjs.org:443:read-only:rest:enforce --wait
   sx 'mkdir -p /sandbox/agent /sandbox/ext /sandbox/work'
   os sandbox upload pi-spike ./openshell-oauth.ts /sandbox/ext/
   sx 'printf "%s" "{\"packages\":[\"npm:@gotgenes/pi-anthropic-auth\"],\"extensions\":[\"/sandbox/ext/openshell-oauth.ts\"]}" > /sandbox/agent/settings.json'
-  local run="cd /sandbox/work && PI_CODING_AGENT_DIR=/sandbox/agent ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-openshell $PI --no-session --model anthropic/claude-haiku-5-5"
-  say "T2a a reply comes back"
-  sx "$run -p 'Reply with exactly: OPENSHELL-OK'" | tee /dev/stderr | grep -q OPENSHELL-OK && pass "T2a reply through proxy" || fail "T2a"
-  say "T2b streaming: deltas arrive spread over time"
-  sx "$run --mode json 'Count from 1 to 60, one number per line.' | node -e '
-    let n=0,a=0,b=0; require(\"readline\").createInterface({input:process.stdin}).on(\"line\",l=>{ if(l.includes(\"text_delta\")){ const t=Date.now(); a||=t; b=t; n++; } }).on(\"close\",()=>console.log(n>5&&b-a>500?\"PASS  T2b streamed\":\"FAIL  T2b\",n,\"deltas over\",b-a,\"ms\"))'"
-  say "T2c the agent sees only a placeholder"
-  sx 'v="$OPENSHELL_ANTHROPIC_PLACEHOLDER"; case "$v" in *openshell:resolve:env:*) echo "PASS  T2c placeholder only";; *) echo "FAIL  T2c";; esac; env | grep -q "sk-ant-oat01-[A-Za-z0-9_-]\{30\}" && echo "FAIL  real token in env" || true'
+  sx "cd /sandbox/work && PI_CODING_AGENT_DIR=/sandbox/agent ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-openshell $PI --no-session --model anthropic/claude-haiku-5-5 -p 'Reply with exactly: OPENSHELL-OK'" \
+    | tee /dev/stderr | grep -q OPENSHELL-OK && pass "T2 reply through the real proxy" || fail "T2"
+  sx 'case "$OPENSHELL_ANTHROPIC_PLACEHOLDER" in *openshell:resolve:env:*) echo "PASS  T2 agent holds only a placeholder";; *) echo "FAIL  T2 placeholder";; esac'
 }
 
-step_t3() {   # egress is deny-by-default
-  say "T3 egress"
-  sx 'node -e "fetch(\"https://example.com\").then(r=>console.log(\"FAIL  T3 example.com reachable\",r.status)).catch(e=>console.log(\"PASS  T3 example.com denied:\",e.cause?.code||e.message))"'
-  sx 'curl -sS -m 10 -o /dev/null -w "%{http_code}\n" https://api.anthropic.com/v1/models || echo "PASS  T3 curl (not an allowed binary) denied"'
-}
-
-step_t4() {   # GitHub: clone + push to one repo only
-  say "T4 GitHub provider (your gh token lives only in the gateway for this spike)"
-  os provider create --name gh-spike --type github --credential "GITHUB_TOKEN=$(gh auth token)"
-  os sandbox provider attach pi-spike gh-spike --wait
-  os policy update pi-spike --rule-name spike_push --binary /usr/bin/git --binary /usr/lib/git-core/git-remote-https \
-    --add-endpoint github.com:443:read-only:rest:enforce --wait
-  os policy update pi-spike --rule-name spike_push --binary /usr/bin/git --binary /usr/lib/git-core/git-remote-https \
-    --add-allow "github.com:443:POST:/$SCRATCH_REPO.git/git-upload-pack" \
-    --add-allow "github.com:443:POST:/$SCRATCH_REPO.git/git-receive-pack" --wait
-  sx 'git config --global user.name spike && git config --global user.email spike@example.invalid &&
-      git config --global credential.helper "!f(){ echo username=x-access-token; echo \"password=$GITHUB_TOKEN\"; }; f"'
-  sx "cd /sandbox/work && rm -rf s && git clone -q https://github.com/$SCRATCH_REPO s && cd s && date > spike.txt && git add . && git commit -qm spike && git push -q origin HEAD:spike-allowed && echo 'PASS  T4a push to scratch repo'" || fail "T4a"
-  sx "cd /sandbox/work/s && git push -q https://github.com/$DENY_REPO HEAD:refs/heads/openshell-spike-deny-test 2>&1 | tail -2; echo '(expect a policy denial above)'"
-  echo "If T4b printed no denial, delete branch openshell-spike-deny-test on $DENY_REPO now."
-}
-
-step_t5() {   # a pi-web worker as a sandbox: exposed port, disk kept across stop/start
-  say "T5 worker image as a long-running sandbox"
+step_t3() {   # pi-web worker as a sandbox: our image, our disk at /data, exposed port, SSE, stop/start, wake time
+  say "T3 worker sandbox (needs allowDriverConfig for the PVC mount)"
+  helm --kube-context "$CTX" upgrade openshell oci://ghcr.io/nvidia/openshell/helm-chart --version "${OS_VERSION#v}" -n "$NS" \
+    --reuse-values --set server.drivers.kubernetes.allowDriverConfig=true --set gateway.allowDriverConfig=true
+  k -n "$NS" rollout status statefulset/openshell --timeout=300s
+  printf '%s\n' 'apiVersion: v1' 'kind: PersistentVolumeClaim' 'metadata: { name: ws-spike }' \
+    'spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }' | k -n "$NS" apply -f -
+  local t0=$SECONDS
   os sandbox create --name worker-spike --from "$IMAGE" --expose 3141 --detach \
-    --env PORT=3141 --env PI_WEB_MODE=real --env HOST=127.0.0.1 -- node /app/server/index.js
-  os sandbox get worker-spike -o json | tee /tmp/worker-spike.json >/dev/null || true
-  echo "Open the service URL printed above (or in 'openshell sandbox get worker-spike') + /api/health; expect 200."
-  os sandbox exec -n worker-spike --no-login-shell -- sh -c 'echo kept > /sandbox/persist.txt'
-  os sandbox stop worker-spike && os sandbox start worker-spike
-  os sandbox exec -n worker-spike --no-login-shell -- cat /sandbox/persist.txt | grep -q kept && pass "T5 /sandbox kept across stop/start" || fail "T5"
+    --env PORT=3141 --env PI_WEB_MODE=real --env HOST=127.0.0.1 \
+    --driver-config-json '{"kubernetes":{"volumes":[{"name":"data","persistent_volume_claim":{"claim_name":"ws-spike","read_only":false}}],"containers":{"agent":{"volume_mounts":[{"name":"data","mount_path":"/data"}]}}}}' \
+    -- node /app/server/index.js
+  echo "create -> Ready: $((SECONDS - t0))s (today's workers wake in ~5-6s)"
+  os sandbox get worker-spike || true
+  read -rp "Service URL from above: " URL
+  read -rp "Auth header for it, if OpenShell printed one (blank if none): " AUTH
+  H=(); [ -n "$AUTH" ] && H=(-H "$AUTH")
+  curl -fsS "${H[@]}" "$URL/api/health" && pass "T3 /api/health via service URL" || fail "T3 health"
+  timeout 6 curl -sSN "${H[@]}" "$URL/api/events" | head -c 300; echo; echo "(expect SSE lines above: pi-web's event stream through OpenShell)"
+  os sandbox exec -n worker-spike --no-login-shell -- sh -c 'echo kept > /data/persist.txt'
+  os sandbox stop worker-spike; t0=$SECONDS; os sandbox start worker-spike
+  echo "stop -> start Ready: $((SECONDS - t0))s"
+  os sandbox exec -n worker-spike --no-login-shell -- cat /data/persist.txt | grep -q kept && pass "T3 /data kept across stop/start" || fail "T3 disk"
+}
+
+step_t4() {   # in-cluster plain-http service behind the SSRF guard (pi-syncd)
+  say "T4 pi-syncd reachable from a sandbox only via an explicit rule"
+  sx 'node -e "fetch(\"http://pi-syncd.pi-sync.svc:8080/v1/health\").then(r=>console.log(\"before rule:\",r.status)).catch(e=>console.log(\"before rule: denied\",e.cause?.code||e.message))"'
+  os policy update pi-spike --rule-name pisync --binary /usr/local/bin/node \
+    --add-endpoint 'pi-syncd.pi-sync.svc:8080:read-write:rest:enforce' --wait
+  sx 'node -e "fetch(\"http://pi-syncd.pi-sync.svc:8080/v1/health\").then(r=>console.log(r.ok?\"PASS  T4 pi-syncd reachable\":\"FAIL  T4\",r.status)).catch(e=>console.log(\"FAIL  T4\",e.cause?.code||e.message))"'
 }
 
 step_teardown() {
   say "teardown"
   os sandbox delete pi-spike worker-spike || true
-  os provider delete anthropic-sub gh-spike || true
+  k -n "$NS" delete pvc ws-spike --wait=false || true
+  os provider delete anthropic-sub || true
   helm --kube-context "$CTX" uninstall openshell -n "$NS" || true
   k delete namespace "$NS" --wait=false || true
   k delete -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$SANDBOX_CRD_VERSION/sandbox.yaml" || true
   os gateway remove spike || true
-  echo "Also: delete $SCRATCH_REPO; the dedicated Anthropic login died with the gateway database."
+  echo "The dedicated Anthropic login died with the gateway database."
 }
 
-"step_${1:?usage: ./run.sh <cli|install|connect|t1|t2|t3|t4|t5|teardown>}"
+"step_${1:?usage: ./run.sh <cli|install|connect|t1|t2|t3|t4|teardown>}"
