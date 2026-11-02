@@ -8,13 +8,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { agentDir, type Project } from "./store.ts";
+import { agentDir, type Project, SAFE_GIT } from "./store.ts";
 
 const NAMESPACE = "pi-roles";
 const PRINCIPAL = "pi-roles";
 const ROLE_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
-/** Host git never runs repo-controlled code: agents can write .git (hooks, fsmonitor). */
-export const SAFE_GIT = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
 
 export interface Role {
 	description?: string;

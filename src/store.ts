@@ -305,8 +305,11 @@ export function scanWorkspace(p: Project): Workspace {
 	return { repos: dirs(join(p.path, "repos")), worktrees };
 }
 
+/** Host git never runs repo-controlled code: agents can write .git (hooks, fsmonitor). */
+export const SAFE_GIT = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+
 function git(args: string[], cwd?: string): string {
-	return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	return execFileSync("git", [...SAFE_GIT, ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 export function repoNameFromUrl(url: string): string {
@@ -385,7 +388,7 @@ export function removeRepo(p: Project, name: string): void {
 function run(cmd: string, args: string[], cwd?: string): Promise<string> {
 	return new Promise((res, rej) =>
 		// Never prompt for credentials and never hang a pi start on a dead network.
-		execFile(cmd, args, { cwd, encoding: "utf8", timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
+		execFile(cmd, cmd === "git" ? [...SAFE_GIT, ...args] : args, { cwd, encoding: "utf8", timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) =>
 			err ? rej(new Error(stderr.trim().split("\n").at(-1) || err.message)) : res(stdout.trim()),
 		),
 	);
