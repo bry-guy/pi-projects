@@ -49,6 +49,7 @@ import {
 	writeTrustAnchor,
 } from "./roles.ts";
 import * as roles from "./roles.ts";
+import { registerRoleAgent } from "./role-agent.ts";
 import * as store from "./store.ts";
 
 /** For pi-mounts and pi-secret-broker, which run in the same pi process. */
@@ -105,6 +106,7 @@ function buildSection(p: Project, r?: SessionRole): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	registerRoleAgent(pi);
 	let current: Project | undefined;
 	let section: string | undefined;
 	let ui: ExtensionContext["ui"] | undefined;
