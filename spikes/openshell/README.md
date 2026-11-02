@@ -1,6 +1,6 @@
 # OpenShell on k3s spike
 
-Question: can NVIDIA OpenShell replace our web worker sandbox (Phase 1.5 in `docs/agent-roles-phase1.md`)
+Question: can NVIDIA OpenShell replace our web worker sandbox (Phase 2, W1 in `docs/agent-roles-plan.md`; paused until Phase 1 is done)
 without breaking the Claude subscription login, streaming, git, or the worker model? Mac stays on Gondolin.
 
 Already proven without OpenShell (2026-11-01, see the plan): Anthropic accepts OpenShell's form-encoded

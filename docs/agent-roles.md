@@ -1,6 +1,6 @@
 # Agent roles and sandboxed projects
 
-Status: design, not built. Implementation plan and open questions: [agent-roles-phase1.md](agent-roles-phase1.md).
+Status: design, not built. Implementation plan and open questions: [agent-roles-plan.md](agent-roles-plan.md).
 
 ## Problem
 

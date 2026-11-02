@@ -1,6 +1,6 @@
 # Cluster caches for role pods
 
-Status: future exploration, not scheduled. Depends on [agent-roles.md](agent-roles.md): role agents in pi-web run as short-lived Kubernetes Jobs that clone repos and install tools on every run.
+Status: Phase 3 of [agent-roles-plan.md](agent-roles-plan.md), future exploration, not scheduled. Depends on [agent-roles.md](agent-roles.md): role agents in pi-web run as short-lived Kubernetes Jobs that clone repos and install tools on every run.
 
 ## Problem
 
