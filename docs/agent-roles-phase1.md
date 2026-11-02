@@ -135,11 +135,25 @@ Model login through OpenShell (from code reading, 2026-11-01; unverified):
   only a placeholder.
 - Rotated refresh tokens are stored (`provider_refresh.rs:1175-1245`).
 - The gateway needs **its own login**. A refresh token shared with the laptop or the worker breaks when one side rotates it.
-- **Check 1:** OpenShell refreshes with a form-encoded POST. pi's Anthropic refresh POSTs JSON to
-  `platform.claude.com/v1/oauth/token`. Does that endpoint accept a form body? Codex (`auth.openai.com`) uses form and should work.
-- **Check 2:** pi picks OAuth mode only if the key contains `sk-ant-oat` (`anthropic-messages.js:781`). A placeholder
-  won't, so pi would send `x-api-key` and the wrong request shape. This needs a small extension or provider override that
-  forces OAuth mode, with the token injected as `Authorization: Bearer` (token grant, `auth_style: bearer`).
+- **Check 1, passed (2026-11-01):** a form-encoded refresh is accepted by `platform.claude.com/v1/oauth/token`.
+  Form and JSON both reach the grant check (`400 invalid_grant` for a bogus token). The endpoint returns 429 for curl's
+  user agent, but not for an empty one, `reqwest`, or `openshell` (OpenShell's reqwest client sends none by default).
+- **Check 2, solved on the pi side (2026-11-01):** OpenShell rewrites a header only if it is exactly `<scheme> <placeholder>`
+  (`secrets.rs:522-560`).
+  - Shim: pi is given the key `sk-ant-oat01-openshell`, so it stays in OAuth mode with Claude Code headers. A ~20-line
+    extension wraps `fetch` and changes `Authorization` to `Bearer openshell:resolve:env:ANTHROPIC_OAUTH_TOKEN`.
+  - Tested with pi 1.4.0 plus anthropic-auth, through a local stand-in proxy applying the same rule (harness in
+    `pi-web-ecosystem/artifacts/research/openshell-test`):
+    - without the shim, the request is refused;
+    - with it, the request is rewritten and upstream returns 200 (`OPENSHELL-OK`).
+  - pi never refreshes an env-var key.
+- **Still unverified (needs a real OpenShell):**
+  - the gateway refresh with a real refresh token, and rotation stored across restarts;
+  - the real proxy's TLS interception with Node (it sets `NODE_EXTRA_CA_CERTS`);
+  - streaming through its L7 proxy;
+  - Codex (ChatGPT OAuth plus account header);
+  - the pi-web worker as a sandbox workload: disk, exposed port, wake/sleep, front end to worker auth;
+  - k3s install (Agent Sandbox CRDs, NetworkPolicy enforcement).
 - Fallback without OpenShell: the trusted front end holds the refresh token and hands workers short-lived access tokens.
   The agent can read the access token but never the refresh token.
 
