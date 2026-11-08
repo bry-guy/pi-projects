@@ -76,6 +76,11 @@ no native addons in the image, so suspect node/runtime; capture
 - Project sessions live in the project: web lists every session under the
   project folder entry, starts and opens them there; pi-sync opens arriving
   project conversations at the project root (pi-sync c9b85c4).
+- Repository sessions (2026-11-07, pi-web #5, supersedes "repos own no
+  sessions"): a session run in a repository or one of its worktrees lists
+  under that repository (Project menu drill-through) and opens there on the
+  project's worker; project-level sessions stay on the folder entry. pi-sync's
+  `/sync open` inside a project keeps the conversation where it ran.
 - Project code sharing, in pi-sync (d196f89; it already owned turn-end
   capture, leases and arrival): every repo/worktree with unshared work is
   pushed to `refs/pi-projects/<project-id>/<branch>` on that repo's remote,
