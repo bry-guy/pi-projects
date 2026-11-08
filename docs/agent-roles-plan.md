@@ -6,7 +6,44 @@ Phases (reordered 2026-11-02 by Bryan):
 1. **Phase 1, local (Mac):** Gondolin sandbox, roles and grants, role runs, secret broker. Built and finished first.
 2. **Phase 2, web:** the OpenShell spike (paused; kit in `spikes/openshell`), then web roles and scoped GitHub tokens.
 3. **Phase 3, cluster caches:** [cluster-caches.md](cluster-caches.md), to be defined later.
-Status: plan, revised 2026-11-01 after Bryan's feedback and advisor review, phases reordered 2026-11-02; decisions at the end. Nothing is built yet. `agent-roles.md` gets updated to match in M6.
+Status: Phase 1 built and its done-criterion met (both roles ran on the Mac); the remaining Phase 1 work is listed
+below. Decisions at the end. `agent-roles.md` still describes the original design and is updated in R5.
+
+## Images (decided 2026-11-07)
+
+Three images, one per use, all on Fedora (glibc; Alpine's musl broke prebuilt tools such as mise's Node). Built
+multi-arch (Mac arm64, k3s amd64). Each is built separately; the few shared tool lines are duplicated, not layered.
+
+| Image | Base | Contents | Used by |
+|---|---|---|---|
+| `pi-local-sandbox` | `fedora-minimal` | bash, git, ripgrep, fd, curl, openssh-clients, ca-certificates | Gondolin VM on the Mac (via Gondolin's `oci` rootfs) |
+| `pi-web-worker` | `fedora-minimal` | the same tools plus Node, pi and the pi-web worker server | web workers (pi runs inside) |
+| `pi-web` | `fedora-minimal` | Node, the pi-web app and workspaced | front end and workspaced |
+
+`pi-local-sandbox` is also the thin default for self-hosters; anyone can build their own image `FROM` it or
+`pi-web-worker`. It replaces pi-mounts' hand-built Alpine `pi-worker` image and the musl mise workaround. Today all
+of pi-web runs one Debian image (`ghcr.io/bry-guy/pi-ez-web`), which `pi-web-worker` and `pi-web` replace in Phase 2.
+
+## Phase 1 remaining (2026-11-07)
+
+- **R1 k3s view token:** check the real expiry of the shared `infra-k3s-view` token (noted as 2026-11-23) and renew it
+  before then.
+- **R2 `pi-local-sandbox`:** spike Gondolin booting from a `fedora-minimal` OCI rootfs and pass the pi-mounts checks
+  (`scripts/spike-sandbox.mjs`); then add the Dockerfile and multi-arch build, point pi-mounts at it, drop the Alpine
+  image config and the musl workaround.
+- **R3 checks:** the `gh auth status` token line in a role run is the placeholder, not the real token; a subagent started
+  from a sandboxed session stays sandboxed; ruleset bypasses (infra RepositoryRole, pi-web DeployKey plus admin) behave as
+  intended or are removed; dialog forwarding in a real TUI.
+- **R4 pi-syncd per-device tokens:** pi-syncd has no authentication, so anything that reaches it can read or plant
+  session text that the Mac later resumes.
+- **R5 docs:** `agent-roles.md` to the current design (runner, wait on block, role workers, no custom proxy, images);
+  repository-sessions reconciled with the project-folder rule; pi-mounts README (Gondolin `fix/undici-7`, upstream PR);
+  rule: environment variables are never a security gate (grants are signed).
+- **R6 cleanup:** delete old Gondolin branches (`fix/forward-undecoded-content-encoding`, `fix/fetch-accept-encoding`).
+  Bryan: dotfiles `settings.json`, `~/dev/castaway` changes.
+- Homelab project, not here: infra hygiene (VM SSH key on all nodes, tailnet `tag:admin-mac` root SSH, developer vault
+  can read the OpenTofu state passphrase, `yq`/`shasum` in `selfhost-media-upload.sh`) and an admin-role decision.
+- Parked: infra deploy key retirement (Phase 1b), pi-observational-memory stale-ctx warning (upstream #108).
 
 ## Phase 1 status (2026-11-02)
 
@@ -186,9 +223,15 @@ the costs are allow-only egress for workers, placeholder logins, and moving work
 
 Shape depends on W1: role workers on today's provider, or OpenShell sandboxes with providers and policy.
 
-### W3: Model login hardening
-Workers can refresh a shared OAuth token on their own (read-only `auth.json`), which would sign everything out. Fix
-independently (workers never refresh), or remove it with OpenShell's gateway login.
+Role workers are ordinary workspaced workers (`ws-<project>--<role>`), so they sleep when idle and wake in ~5-6 s. A run
+waiting on Bryan counts as busy and holds one of the `WORKSPACED_MAX_AWAKE` slots until answered.
+
+### W3: Model login hardening (done, pi-web 8c1f0ee)
+Workers get access tokens only; web holds the refresh token. OpenShell's gateway login could replace this later.
+
+### W4: Images
+Build `pi-web-worker` and `pi-web` (see Images), multi-arch, and move workers, the front end and workspaced off
+`pi-ez-web`. Settle with W1: OpenShell sandboxes would run `pi-web-worker`.
 
 ### W1 background: OpenShell notes
 Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, and an Anthropic OAuth provider with refresh.
@@ -242,4 +285,5 @@ See [cluster-caches.md](cluster-caches.md). Not scheduled.
    released while waiting, and the heartbeat keeps running so a waiting run isn't counted as stalled. This replaces the doc's "ask
    tools disabled; ends blocked".
 5. **Roles: both. `pi-web/pi-web-developer` first, then `infra/infra-developer`** (needs the k3s API spike, M1(i)).
-6. Still open: branch protection on `main` for agent-pushed repos.
+6. Branch protection on `main`: rulesets plus CODEOWNERS (2026-11-07, see Phase 1 status).
+7. **Images (2026-11-07):** `pi-local-sandbox`, `pi-web-worker`, `pi-web`, all Fedora, one per use (see Images).
