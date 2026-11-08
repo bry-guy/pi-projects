@@ -20,8 +20,8 @@ multi-arch (Mac arm64, k3s amd64). Each is built separately; the few shared tool
 | `pi-web-worker` | `fedora-minimal` | the same tools plus Node, pi and the pi-web worker server | web workers (pi runs inside) |
 | `pi-web` | `fedora-minimal` | Node, the pi-web app and workspaced | front end and workspaced |
 
-`pi-local-sandbox` is also the thin default for self-hosters; anyone can build their own image `FROM` it or
-`pi-web-worker`. It replaces pi-mounts' hand-built Alpine `pi-worker` image and the musl mise workaround. Today all
+`pi-web-worker` is the thin default for self-hosters (they don't use Gondolin); anyone can build their own image
+`FROM` it. It replaces pi-mounts' hand-built Alpine `pi-worker` image and the musl mise workaround. Today all
 of pi-web runs one Debian image (`ghcr.io/bry-guy/pi-ez-web`), which `pi-web-worker` and `pi-web` replace in Phase 2.
 
 ## Phase 1 remaining (2026-11-07)
