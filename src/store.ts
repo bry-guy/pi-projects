@@ -452,7 +452,8 @@ export function pushState(message: string): Promise<void> {
 		try {
 			await run("git", ["push", "-q"], root);
 		} catch {
-			await run("git", ["pull", "-q", "--rebase"], root);
+			await run("git", ["fetch", "-q", "origin", "main"], root);
+			await run("git", ["rebase", "-q", "origin/main"], root);
 			await run("git", ["push", "-q"], root);
 		}
 	});
@@ -464,7 +465,9 @@ export function pullState(): Promise<void> {
 	const root = projectsDir();
 	return serial(async () => {
 		await commitAll("pi-projects: local changes");
-		await run("git", ["pull", "-q", "--rebase"], root);
+		// Not `git pull`: FETCH_HEAD is shared, so concurrent pi starts could leave several branches in it.
+		await run("git", ["fetch", "-q", "origin", "main"], root);
+		await run("git", ["rebase", "-q", "origin/main"], root);
 	});
 }
 
