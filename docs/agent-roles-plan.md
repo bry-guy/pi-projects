@@ -32,8 +32,14 @@ Differences from the plan:
   Flip in `scripts/agent-role-file.py`.
 - Gondolin runs from a local build until the Accept-Encoding fix is upstream (PR prepared, not sent).
 
-Still to do by Bryan: create the pi-web-developer token and service account, merge infra `agent/role-file`, then
-`/project grant` / `/project source` / `/project sign` (Touch ID).
+Getting changes out (2026-11-07): each role has its own GitHub App (`bry-guy-pi-web-developer`,
+`bry-guy-infra-developer`), installed only on its repo, whose 1-hour tokens the broker mints from 1Password
+(`github-app:op://<role>/github-app`, limited to the item's `repos`). Agents push `feature/<name>` (pi-web: deploys
+preview) or `agent/<name>`, open a PR and `gh pr merge --auto --squash`. Rulesets on `main` require a PR and passing CI
+(`test` on pi-web, `check` on infra); CODEOWNERS makes PRs touching `.pi/`, `.github/` (and pi-web `deploy/`,
+`scripts/deploy.sh`) wait for Bryan. Verified: an infra-developer role run merged its own docs PR; a bot PR touching
+`.pi/` stayed blocked with CI green; the pi-web bot can't push `main`. pi-web workflows push `main` with a `ci-main`
+deploy key, and the deploy job runs `deploy.sh` from `main`, never from the pushed branch.
 
 ## Goal and threat model
 
