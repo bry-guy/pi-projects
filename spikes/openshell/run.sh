@@ -5,8 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-OS_VERSION="${OS_VERSION:-v0.1.6}"            # OpenShell release (CLI + chart)
-SANDBOX_CRD_VERSION="${SANDBOX_CRD_VERSION:-v1.0.9}"  # kubernetes-sigs/agent-sandbox
+OS_VERSION="${OS_VERSION:-v0.1.7}"            # OpenShell release (CLI + chart)
+SANDBOX_CRD_VERSION="${SANDBOX_CRD_VERSION:-v1.0.10}"  # kubernetes-sigs/agent-sandbox
 CTX="${KUBECTL_CONTEXT:-infra-k3s-admin}"
 NS=openshell
 IMAGE="${IMAGE:?set IMAGE=ghcr.io/bry-guy/pi-ez-web:sha-<commit> (a current worker build)}"
@@ -43,7 +43,7 @@ step_install() {
   helm --kube-context "$CTX" upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart \
     --version "${OS_VERSION#v}" --namespace "$NS" \
     --set server.disableTls=true \
-    --set 'gatewayConfig.openshell\.gateway\.auth.allow_unauthenticated_users=true' \
+    --set server.allowUnauthenticatedUsers=true \
     --set server.telemetryEnabled=false \
     --set 'imagePullSecrets[0].name=ghcr-pull'
   k -n "$NS" rollout status statefulset/openshell --timeout=300s
@@ -109,9 +109,9 @@ step_t2() {   # our pi + anthropic-auth + shim, through the real proxy (TLS inte
 step_t3() {   # pi-web worker as a sandbox: our image, our disk at /data, exposed port, SSE, stop/start, wake time
   say "T3 worker sandbox (needs allowDriverConfig for the PVC mount)"
   helm --kube-context "$CTX" upgrade openshell oci://ghcr.io/nvidia/openshell/helm-chart --version "${OS_VERSION#v}" -n "$NS" \
-    --reuse-values --set server.drivers.kubernetes.allowDriverConfig=true --set gateway.allowDriverConfig=true
+    --reuse-values --set server.drivers.kubernetes.allowDriverConfig=true
   k -n "$NS" rollout status statefulset/openshell --timeout=300s
-  printf '%s\n' 'apiVersion: v1' 'kind: PersistentVolumeClaim' 'metadata: { name: ws-spike }' \
+  printf '%s\n' 'apiVersion: v1' 'kind: PersistentVolumeClaim' "metadata: { name: ws-spike, labels: { openshell.ai/sandbox-attachable: 'true', openshell.ai/sandbox-attachable-workspace: '${OS_WORKSPACE:-default}' } }" \
     'spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }' | k -n "$NS" apply -f -
   local t0=$SECONDS
   os sandbox create --name worker-spike --from "$IMAGE" --expose 3141 --detach \

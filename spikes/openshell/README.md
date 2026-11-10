@@ -19,7 +19,7 @@ binary in `./bin` (no Homebrew formula, no local gateway).
    T1 deletes `LOGIN_DIR` once the gateway holds the token.
 1. `export IMAGE=ghcr.io/bry-guy/pi-ez-web:sha-<current main commit>`
 2. `./run.sh cli && ./run.sh install`, then the port-forward in a second terminal, then `./run.sh connect`
-3. `./run.sh t1` … `./run.sh t4` (flags follow the v0.1.6 docs; if one is rejected, check `bin/openshell <cmd> --help`)
+3. `./run.sh t1` … `./run.sh t4` (flags follow the v0.1.7 docs; if one is rejected, check `bin/openshell <cmd> --help`)
 4. `./run.sh teardown`
 
 ## Pass criteria
