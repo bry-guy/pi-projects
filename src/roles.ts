@@ -236,3 +236,14 @@ export function sessionRole(project: Project, env: NodeJS.ProcessEnv = process.e
 		return { ...out, problem: (e as Error).message };
 	}
 }
+
+/** Session name for a role run: "<role>: <first line of the task, cut to ~60 chars on a word boundary>". */
+export function runName(role: string, task: string, max = 60): string {
+	const short = role.split("/").pop() ?? role;
+	let line = task.trim().split("\n")[0].trim();
+	if (line.length > max) {
+		const cut = line.slice(0, max + 1).lastIndexOf(" ");
+		line = `${line.slice(0, cut > max / 2 ? cut : max).trimEnd()}…`;
+	}
+	return line ? `${short}: ${line}` : short;
+}

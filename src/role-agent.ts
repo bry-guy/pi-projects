@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadRole, trustedGrants, validateRoleId } from "./roles.ts";
+import { loadRole, runName, trustedGrants, validateRoleId } from "./roles.ts";
 import { assertActive, isInside, projectForCwd } from "./store.ts";
 
 const RESULT = "role-result";
@@ -103,7 +103,8 @@ export function registerRoleAgent(pi: ExtensionAPI) {
 			if (!isInside(cwd, project.path)) throw new Error("cwd must be inside the project");
 			const parentFile = ctx.sessionManager.getSessionFile();
 			const msg = `You are running as role ${role} for project ${project.name}, started by another session to do one task. Nobody is watching this session; when you're done, end with a short summary of what you did, what you pushed, and anything left undone.\n\nTask:\n${params.task}`;
-			const { file, pid } = start({ cwd, msg, env: { PI_ROLE: role } });
+			// An older pi-background ignores `name`; the run then keeps its first-message title.
+			const { file, pid } = start({ cwd, msg, env: { PI_ROLE: role }, name: runName(role, params.task) });
 			if (parentFile && pid) {
 				pending.push({ parentFile, pid, role, file });
 				poller ??= setInterval(deliver, 10_000);
