@@ -7,7 +7,7 @@ Phases (reordered 2026-11-02 by Bryan):
 2. **Phase 2, web:** the OpenShell spike (paused; kit in `spikes/openshell`), then web roles and scoped GitHub tokens.
 3. **Phase 3, cluster caches:** [cluster-caches.md](cluster-caches.md), to be defined later.
 Status: Phase 1 built and its done-criterion met (both roles ran on the Mac); the remaining Phase 1 work is listed
-below. Decisions at the end. `agent-roles.md` still describes the original design and is updated in R5.
+below. Decisions at the end. `agent-roles.md` was updated in R5 (2026-11-07) and describes the current design.
 
 ## Images (decided 2026-11-07)
 
