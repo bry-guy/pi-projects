@@ -37,11 +37,12 @@ the kube API, so it stays on today's provider).
 
 ## Results
 
-2026-11-10, OpenShell 0.1.7 and Agent Sandbox 1.0.10 on k3s (namespace `openshell`). T1 and T2 are not run yet: they
-need Bryan's dedicated Claude sign-in.
+2026-11-10, OpenShell 0.1.7 and Agent Sandbox 1.0.10 on k3s (namespace `openshell`). All four pass.
 
 | Test | Result |
 |---|---|
+| T1 | **Pass.** The gateway refreshed the dedicated login (the original refresh token was then rejected) and refreshed again after a gateway restart. It refreshes on its own about every 10 minutes. |
+| T2 | **Pass.** pi with anthropic-auth and the shim replied `OPENSHELL-OK` in 3 s through the proxy; the sandbox env held only an `openshell:resolve:` placeholder. No CA fix was needed (the sandbox sets `NODE_EXTRA_CA_CERTS`). Streaming was not proven: the reply was too short to tell. |
 | T3 | **Pass.** `/api/health` 200 through the gateway 6 s after create; SSE connects; stop removes both pods; start to health 200 in 3 s; a file on `/data` survives. |
 | T4 | **Pass.** pi-syncd and the internet are denied by default (`EACCES`); pi-syncd answers 200 after one endpoint rule. |
 
@@ -54,9 +55,14 @@ What our setup needed:
 - OpenShell sets `HOME=/sandbox` for the workload: pass `HOME` explicitly.
 - Cluster services need their full name (`<svc>.<ns>.svc.cluster.local`): the sandbox resolver has no search domains.
 - Exposed services are reached through the gateway by Host header (`default--<sandbox>.openshell.localhost`).
+- T2 needs the worker policy at create (`t2-policy.yaml`), or `/app` is unreadable. Scoped npm packages
+  (`@scope/name`) need `allow_encoded_slash: true` on the registry rule, which only a policy file can set
+  (`policy update --add-endpoint` cannot).
+- `sandbox upload` skips git-ignored files unless `--no-git-ignore` is passed.
 - Cost while running: gateway 48 Mi, plus one supervisor pod (18 Mi) per sandbox beside the workload pod.
 
-Teardown needs cluster admin again (CRDs, cluster roles).
+After the run the dedicated login was deleted from the gateway (provider `anthropic-sub`), so T1 and T2 need a new
+sign-in to repeat. Teardown needs cluster admin again (CRDs, cluster roles).
 
 ## Safety notes
 
