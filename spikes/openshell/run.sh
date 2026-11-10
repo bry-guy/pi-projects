@@ -43,7 +43,8 @@ step_install() {
   helm --kube-context "$CTX" upgrade --install openshell oci://ghcr.io/nvidia/openshell/helm-chart \
     --version "${OS_VERSION#v}" --namespace "$NS" \
     --set server.disableTls=true \
-    --set server.allowUnauthenticatedUsers=true \
+    --set server.auth.allowUnauthenticatedUsers=true \
+    --set server.drivers.kubernetes.allowDriverConfig=true \
     --set server.telemetryEnabled=false \
     --set 'imagePullSecrets[0].name=ghcr-pull'
   k -n "$NS" rollout status statefulset/openshell --timeout=300s
@@ -106,37 +107,36 @@ step_t2() {   # our pi + anthropic-auth + shim, through the real proxy (TLS inte
   sx 'case "$OPENSHELL_ANTHROPIC_PLACEHOLDER" in *openshell:resolve:env:*) echo "PASS  T2 agent holds only a placeholder";; *) echo "FAIL  T2 placeholder";; esac'
 }
 
+WORKER_HOST="Host: default--worker-spike.openshell.localhost:8080"   # the gateway routes exposed services by Host header
+health() { for _ in $(seq 1 90); do [ "$(curl -s -m 2 -o /dev/null -w '%{http_code}' -H "$WORKER_HOST" http://127.0.0.1:8080/api/health)" = 200 ] && return 0; sleep 1; done; return 1; }
+wx() { os sandbox exec -n worker-spike --no-login-shell -- sh -c "$1"; }
+
 step_t3() {   # pi-web worker as a sandbox: our image, our disk at /data, exposed port, SSE, stop/start, wake time
-  say "T3 worker sandbox (needs allowDriverConfig for the PVC mount)"
-  helm --kube-context "$CTX" upgrade openshell oci://ghcr.io/nvidia/openshell/helm-chart --version "${OS_VERSION#v}" -n "$NS" \
-    --reuse-values --set server.drivers.kubernetes.allowDriverConfig=true
-  k -n "$NS" rollout status statefulset/openshell --timeout=300s
+  say "T3 worker sandbox (the PVC mount needs allowDriverConfig, set at install)"
   printf '%s\n' 'apiVersion: v1' 'kind: PersistentVolumeClaim' "metadata: { name: ws-spike, labels: { openshell.ai/sandbox-attachable: 'true', openshell.ai/sandbox-attachable-workspace: '${OS_WORKSPACE:-default}' } }" \
     'spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }' | k -n "$NS" apply -f -
   local t0=$SECONDS
-  os sandbox create --name worker-spike --from "$IMAGE" --expose 3141 --detach \
-    --env PORT=3141 --env PI_WEB_MODE=real --env HOST=127.0.0.1 \
-    --driver-config-json '{"kubernetes":{"volumes":[{"name":"data","persistent_volume_claim":{"claim_name":"ws-spike","read_only":false}}],"containers":{"agent":{"volume_mounts":[{"name":"data","mount_path":"/data"}]}}}}' \
+  # The default policy hides /app and the mount defaults to read-only; OpenShell also resets HOME to /sandbox.
+  os sandbox create --name worker-spike --from "$IMAGE" --policy worker-policy.yaml --expose 3141 --detach --no-tty \
+    --env PORT=3141 --env PI_WEB_MODE=real --env HOST=127.0.0.1 --env HOME=/data/pi-ez-operator-home \
+    --driver-config-json '{"kubernetes":{"volumes":[{"name":"data","persistent_volume_claim":{"claim_name":"ws-spike","read_only":false}}],"containers":{"agent":{"volume_mounts":[{"name":"data","mount_path":"/data","read_only":false}]}}}}' \
     -- node /app/server/index.js
-  echo "create -> Ready: $((SECONDS - t0))s (today's workers wake in ~5-6s)"
-  os sandbox get worker-spike || true
-  read -rp "Service URL from above: " URL
-  read -rp "Auth header for it, if OpenShell printed one (blank if none): " AUTH
-  H=(); [ -n "$AUTH" ] && H=(-H "$AUTH")
-  curl -fsS "${H[@]}" "$URL/api/health" && pass "T3 /api/health via service URL" || fail "T3 health"
-  timeout 6 curl -sSN "${H[@]}" "$URL/api/events" | head -c 300; echo; echo "(expect SSE lines above: pi-web's event stream through OpenShell)"
-  os sandbox exec -n worker-spike --no-login-shell -- sh -c 'echo kept > /data/persist.txt'
+  health && pass "T3 /api/health via the gateway, $((SECONDS - t0))s after create (today's workers wake in ~5-6s)" || fail "T3 health"
+  timeout 6 curl -sSN -H "$WORKER_HOST" http://127.0.0.1:8080/api/events | head -c 300 | grep -q connected && pass "T3 SSE through the gateway" || fail "T3 SSE"
+  wx 'echo kept > /data/persist.txt'
   os sandbox stop worker-spike; t0=$SECONDS; os sandbox start worker-spike
-  echo "stop -> start Ready: $((SECONDS - t0))s"
-  os sandbox exec -n worker-spike --no-login-shell -- cat /data/persist.txt | grep -q kept && pass "T3 /data kept across stop/start" || fail "T3 disk"
+  health && echo "stop -> start -> health: $((SECONDS - t0))s"
+  wx 'cat /data/persist.txt' | grep -q kept && pass "T3 /data kept across stop/start" || fail "T3 disk"
 }
 
-step_t4() {   # in-cluster plain-http service behind the SSRF guard (pi-syncd)
+step_t4() {   # in-cluster plain-http service behind the egress guard (pi-syncd), from the worker sandbox
   say "T4 pi-syncd reachable from a sandbox only via an explicit rule"
-  sx 'node -e "fetch(\"http://pi-syncd.pi-sync.svc:8080/v1/health\").then(r=>console.log(\"before rule:\",r.status)).catch(e=>console.log(\"before rule: denied\",e.cause?.code||e.message))"'
-  os policy update pi-spike --rule-name pisync --binary /usr/local/bin/node \
-    --add-endpoint 'pi-syncd.pi-sync.svc:8080:read-write:rest:enforce' --wait
-  sx 'node -e "fetch(\"http://pi-syncd.pi-sync.svc:8080/v1/health\").then(r=>console.log(r.ok?\"PASS  T4 pi-syncd reachable\":\"FAIL  T4\",r.status)).catch(e=>console.log(\"FAIL  T4\",e.cause?.code||e.message))"'
+  # The sandbox resolver has no cluster search domains: use the full service name.
+  local probe='node -e "fetch(\"http://pi-syncd.pi-sync.svc.cluster.local:8080/v1/health\").then(r=>console.log(\"status\",r.status)).catch(e=>console.log(\"denied\",e.cause?.code||e.message))"'
+  wx "$probe" | grep -q denied && pass "T4 denied before the rule" || fail "T4 open before the rule"
+  os policy update worker-spike --rule-name pisync --binary /usr/local/bin/node \
+    --add-endpoint 'pi-syncd.pi-sync.svc.cluster.local:8080:read-write:rest:enforce' --wait
+  wx "$probe" | grep -q "status 200" && pass "T4 pi-syncd reachable after the rule" || fail "T4"
 }
 
 step_teardown() {
