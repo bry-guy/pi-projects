@@ -13,7 +13,7 @@ A **project** is a persistent workspace: sessions, repos, memory and scratch fil
 
 ## Phase 1: local projects (done)
 
-Status: Phases 1 to 4 are implemented. Phase 5 (one pi-web worker per project) is implemented in the pi-web repo since 2026-10-30.
+Status: Phases 1 and 4 are implemented here. Phase 2 is built for the Mac as agent roles (see [agent-roles.md](agent-roles.md)). Phase 5 (one pi-web worker per project) is implemented in the pi-web repo since 2026-10-30. Phase 3 (memory engines) and Phase 6 (lifecycle UI) are not started.
 
 ### Layout
 
