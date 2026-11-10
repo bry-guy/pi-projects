@@ -18,7 +18,8 @@ binary in `./bin` (no Homebrew formula, no local gateway).
    `export LOGIN_DIR=$(mktemp -d); PI_CODING_AGENT_DIR=$LOGIN_DIR pi` → `/login` → Anthropic → quit.
    T1 deletes `LOGIN_DIR` once the gateway holds the token.
 1. `export IMAGE=ghcr.io/bry-guy/pi-ez-web:sha-<current main commit>`
-2. `./run.sh cli && ./run.sh install`, then the port-forward in a second terminal, then `./run.sh connect`
+2. `./run.sh cli && ./run.sh install` (cluster admin), then the port-forward in a second terminal, then `./run.sh connect`.
+   From here a namespace-only kubeconfig is enough: `KUBECONFIG=~/.kube/openshell-spike.yaml KUBECTL_CONTEXT=openshell-spike`
 3. `./run.sh t1` … `./run.sh t4` (flags follow the v0.1.7 docs; if one is rejected, check `bin/openshell <cmd> --help`)
 4. `./run.sh teardown`
 
@@ -33,6 +34,29 @@ binary in `./bin` (no Homebrew formula, no local gateway).
 
 Not covered: Codex login (decide after T1/T2), the infra worker (needs a cluster-admin service account and
 the kube API, so it stays on today's provider).
+
+## Results
+
+2026-11-10, OpenShell 0.1.7 and Agent Sandbox 1.0.10 on k3s (namespace `openshell`). T1 and T2 are not run yet: they
+need Bryan's dedicated Claude sign-in.
+
+| Test | Result |
+|---|---|
+| T3 | **Pass.** `/api/health` 200 through the gateway 6 s after create; SSE connects; stop removes both pods; start to health 200 in 3 s; a file on `/data` survives. |
+| T4 | **Pass.** pi-syncd and the internet are denied by default (`EACCES`); pi-syncd answers 200 after one endpoint rule. |
+
+What our setup needed:
+
+- Chart keys: `server.auth.allowUnauthenticatedUsers` and `server.drivers.kubernetes.allowDriverConfig`, both set at
+  install. After install every sandbox step works with a token limited to the `openshell` namespace.
+- A policy file (`worker-policy.yaml`): the default filesystem policy makes `/app` unreadable, so the worker exits.
+- The PVC mount needs `read_only: false` on the container mount too, or `/data` is read-only.
+- OpenShell sets `HOME=/sandbox` for the workload: pass `HOME` explicitly.
+- Cluster services need their full name (`<svc>.<ns>.svc.cluster.local`): the sandbox resolver has no search domains.
+- Exposed services are reached through the gateway by Host header (`default--<sandbox>.openshell.localhost`).
+- Cost while running: gateway 48 Mi, plus one supervisor pod (18 Mi) per sandbox beside the workload pod.
+
+Teardown needs cluster admin again (CRDs, cluster roles).
 
 ## Safety notes
 
