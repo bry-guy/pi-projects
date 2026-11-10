@@ -42,6 +42,7 @@ import {
 	grantsStatus,
 	loadRole,
 	readGrants,
+	roleLines,
 	type SessionRole,
 	saveSignedGrants,
 	sessionRole,
@@ -60,26 +61,6 @@ const API = Symbol.for("pi-projects.v1");
 const ENTRY = "pi-project";
 const STATUS = "pi-project";
 
-function roleLines(r: SessionRole | undefined): string[] {
-	if (!r) return [];
-	const out: string[] = [];
-	if (r.sandbox) {
-		out.push(
-			"",
-			"Sandbox: your tools run in a VM. repos/<repo> main checkouts are read-only; make changes in a worktree",
-			"(project_worktree). Network access is limited to an allowlist; a 403 'blocked by policy' means the host is not allowed.",
-		);
-	}
-	if (r.roleId) out.push(`Role: ${r.roleId}${r.role?.description ? ` (${r.role.description})` : ""}.`);
-	const others = (r.grant?.roles ?? []).filter((x) => x !== r.roleId);
-	if (others.length) out.push(`Granted roles you can delegate to with role_agent: ${others.join(", ")}.`);
-	if (r.role?.broker && Object.keys(r.role.broker).length) {
-		out.push(`Host actions (broker_run): ${Object.entries(r.role.broker).map(([k, a]) => `${k}${a.description ? ` (${a.description})` : ""}`).join(", ")}.`);
-	}
-	if (r.problem) out.push(`Roles: ${r.problem}.`);
-	return out;
-}
-
 function buildSection(p: Project, r?: SessionRole): string {
 	const ws = scanWorkspace(p);
 	const lines = [
@@ -91,7 +72,11 @@ function buildSection(p: Project, r?: SessionRole): string {
 		"- A repo's own AGENTS.md is not loaded automatically from the project root; read it before working in that repo.",
 		`Repos: ${ws.repos.length ? ws.repos.map((r) => `repos/${r}`).join(", ") : "(none)"}`,
 		`Worktrees: ${ws.worktrees.length ? ws.worktrees.map((w) => `worktrees/${w}`).join(", ") : "(none)"}`,
-		...roleLines(r),
+		...roleLines(r, (id) => {
+			try {
+				return loadRole(p, id, { fetch: false }).description;
+			} catch {}
+		}),
 	];
 	if (p.memory.enabled) {
 		lines.push(
