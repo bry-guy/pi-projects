@@ -36,8 +36,12 @@ sandbox), [pi-secret-broker](https://github.com/bry-guy/pi-secret-broker) (secre
 - `/project roles`: grants, signature, missing secret sources. `/project grant <repo>/<role> [--default]`,
   `/project ungrant <repo>/<role>`, `/project source <repo>/<role> <NAME> <source>`, `/project sandbox on|off`,
   `/project sign` (review and sign the file as it is). Each change signs once (one Touch ID).
-- `role_agent(role, task, cwd?)`: a fresh background session as a granted role, sandboxed, whose final reply comes
-  back to the caller as a message. Role runs can't change grants.
+- `role_agent(role, task, cwd?, background?)`: a fresh session as a granted role, sandboxed with that role's
+  credentials (pi-background runs it). The call waits and returns the run's final reply; Esc stops the run (with a
+  pi-background that has `stop()`). With `background: true`, or once the run asks the user something or passes 15
+  minutes, the reply comes back to the calling session as a message instead. Role runs can't change grants.
+- Unsandboxed sessions with signed grants see the granted roles in the system prompt, with a nudge to use
+  `role_agent` for work that fits one.
 - Host git run by pi-projects never runs repo hooks or fsmonitor (agents can write `.git`).
 
 ## Test

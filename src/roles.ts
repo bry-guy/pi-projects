@@ -247,3 +247,40 @@ export function runName(role: string, task: string, max = 60): string {
 	}
 	return line ? `${short}: ${line}` : short;
 }
+
+/**
+ * The role part of a project's system-prompt text. An unsandboxed session with signed grants lists the granted roles
+ * (with `describe`'s descriptions) and nudges work that fits one to role_agent.
+ */
+export function roleLines(r: SessionRole | undefined, describe: (roleId: string) => string | undefined = () => undefined): string[] {
+	if (!r) return [];
+	const out: string[] = [];
+	if (r.sandbox) {
+		out.push(
+			"",
+			"Sandbox: your tools run in a VM. repos/<repo> main checkouts are read-only; make changes in a worktree",
+			"(project_worktree). Network access is limited to an allowlist; a 403 'blocked by policy' means the host is not allowed.",
+		);
+	}
+	if (r.roleId) out.push(`Role: ${r.roleId}${r.role?.description ? ` (${r.role.description})` : ""}.`);
+	if (!r.sandbox && r.grant?.roles.length) {
+		out.push(
+			"",
+			"Granted roles (role_agent):",
+			...r.grant.roles.map((id) => {
+				const d = describe(id);
+				return `- ${id}${d ? `: ${d}` : ""}`;
+			}),
+			"Prefer role_agent for work that fits one of these roles: it runs sandboxed with only that role's credentials.",
+			"Do the work yourself when it needs access no role has.",
+		);
+	} else {
+		const others = (r.grant?.roles ?? []).filter((x) => x !== r.roleId);
+		if (others.length) out.push(`Granted roles you can delegate to with role_agent: ${others.join(", ")}.`);
+	}
+	if (r.role?.broker && Object.keys(r.role.broker).length) {
+		out.push(`Host actions (broker_run): ${Object.entries(r.role.broker).map(([k, a]) => `${k}${a.description ? ` (${a.description})` : ""}`).join(", ")}.`);
+	}
+	if (r.problem) out.push(`Roles: ${r.problem}.`);
+	return out;
+}
