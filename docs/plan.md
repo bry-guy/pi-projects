@@ -11,7 +11,9 @@ A **project** is a persistent workspace: sessions, repos, memory and scratch fil
   - A session records its own project ID with `appendEntry`.
   - Project membership is derived, never stored: a session belongs to the project when its header `cwd` is inside the project folder.
 
-## Phase 1: local projects (current)
+## Phase 1: local projects (done)
+
+Status: Phases 1 to 4 are implemented. Phase 5 (one pi-web worker per project) is implemented in the pi-web repo since 2026-10-30.
 
 ### Layout
 

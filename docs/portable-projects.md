@@ -47,9 +47,10 @@ no native addons in the image, so suspect node/runtime; capture
   project from `PI_PROJECTS_STATE_REMOTE` (added to workspace-env ConfigMap)
   or creates it. New project in the UI asks for a name.
 - Dotfiles: pi-projects and pi-background install from git (yadm 0218806).
-- Not yet verified on the cluster: creating a project worker from the UI
-  (sparse clone of the private state repo needs git credentials in the pod),
-  and laptop sessions listing in its Project menu.
+- Verified on the cluster 2026-10-30: a project worker (`ws-pi-web-ecosystem`)
+  was created from the UI; its sparse clone of the private state repo and its
+  HTTPS repo clones worked, and a session opened there. Not yet verified:
+  laptop sessions listing in its Project menu.
 - S6 done: pi-sync `335c4ca` (deployed) adds `GET /v1/projects` and
   `?project=` on `/v1/sessions`.
 - W7 built: pi-web `1c3ea89` on `portable-projects`, live on preview (UI only;
