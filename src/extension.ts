@@ -392,7 +392,8 @@ export default function (pi: ExtensionAPI) {
 			const cur = g.projects[p.id] ?? { name: p.name, roles: [] };
 			cur.name = p.name;
 			if (!cur.roles.includes(id)) cur.roles.push(id);
-			if (flags.includes("--default")) cur.default = id;
+			// The first role is the default: a sandboxed project with no default role runs with no grants at all.
+			if (flags.includes("--default") || !cur.default) cur.default = id;
 			g.projects[p.id] = cur;
 			saveSignedGrants(g);
 			refresh(ctx);
@@ -440,8 +441,13 @@ export default function (pi: ExtensionAPI) {
 			if (!g) return;
 			g.projects[p.id] = { ...(g.projects[p.id] ?? { name: p.name, roles: [] }), sandbox: arg === "on" };
 			saveSignedGrants(g);
-			refresh(ctx);
-			ctx.ui.notify(`Sandbox ${arg} for ${p.name}. New sessions pick it up; /reload this one.`, "info");
+			const noRole = arg === "on" && !g.projects[p.id].default;
+			ctx.ui.notify(
+				`Sandbox ${arg} for ${p.name}.${noRole ? " No default role: sessions get no secrets and only the default hosts (/project grant <repo>/<role>)." : ""}`,
+				noRole ? "warning" : "info",
+			);
+			await ctx.reload(); // pi-mounts decides at session start
+			return;
 		},
 		async doctor(_arg, ctx) {
 			const issues = doctor();
