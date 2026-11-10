@@ -20,7 +20,7 @@ Projects live in `$PI_PROJECTS_DIR`, which defaults to `~/.pi/agent/pi-projects/
 
 Sync projects across machines with `/project share <git-remote>` (once per machine, one private repo for all projects). It makes `$PI_PROJECTS_DIR` a git repo tracking only `project.json` and `memory.md` (`repos/`, `worktrees/` and `artifacts/` are ignored; memory merges line by line). pi-projects commits and pushes after every project change and pulls when a session starts. Each session records `{projectId, name, rel}` in a `pi-project` custom entry, so pi-sync can reopen it in the same project folder on another machine.
 
-See [docs/plan.md](docs/plan.md). Phase 1 (local projects) is implemented.
+See [docs/plan.md](docs/plan.md) for the phases and which are implemented.
 
 ## Roles and sandboxing (Mac)
 
