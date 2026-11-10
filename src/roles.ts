@@ -3,7 +3,8 @@
 // - A role is `<repo>/.pi/roles/<role>.json`, read from origin's default branch, so it changes only by a merge.
 // - Grants live in `~/.pi/agent/pi-roles.json`, signed with Bryan's SSH key (1Password agent, Touch ID). The trust
 //   anchor (allowed_signers) lives outside dotfiles and outside every sandbox mount.
-// - Unsigned or badly signed grants count as no grants.
+// - Unsigned or badly signed grants count as no grants. Once a trust anchor exists, an unsigned file with grants counts
+//   as tampered (deleting the signature must not turn the sandbox off).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -125,6 +126,24 @@ export function trustedGrants(): { grants: GrantsFile; problem?: string } {
 	return problem ? { grants: { projects: {}, sources: {} }, problem } : { grants: g };
 }
 
+export type GrantsStatus = "ok" | "none" | "unsigned" | "tampered";
+
+/** ok: signed and verified. tampered: a signature that fails, or no signature on a machine that has signed before. */
+export function grantsStatus(g: GrantsFile, problem: string | undefined, anchor = existsSync(allowedSignersFile())): GrantsStatus {
+	if (!problem) return "ok";
+	if (g.signature) return "tampered";
+	if (!Object.keys(g.projects).length) return "none";
+	return anchor ? "tampered" : "unsigned";
+}
+
+/** Warning shown once at session start, or undefined when grants are fine or absent. */
+export function grantsNotice(status: GrantsStatus): string | undefined {
+	if (status === "unsigned") return "pi-projects: role grants are not signed, so roles are off. Run /project sign.";
+	if (status === "tampered")
+		return `pi-projects: role grants failed their signature check, so roles are off and the sandbox is on. Run /project sign after checking ${rolesFile()}.`;
+	return undefined;
+}
+
 function signerKey(): string {
 	const line = readFileSync(allowedSignersFile(), "utf8")
 		.split("\n")
@@ -217,6 +236,8 @@ export interface SessionRole {
 	sandbox: boolean;
 	/** Why the role or grants aren't usable */
 	problem?: string;
+	/** Warning for the user when grants are unsigned or tampered */
+	notice?: string;
 }
 
 /** What a session in this project runs as. PI_ROLE (role runs) must be granted; otherwise the default role. */
@@ -224,9 +245,9 @@ export function sessionRole(project: Project, env: NodeJS.ProcessEnv = process.e
 	const { grants, problem } = trustedGrants();
 	const grant = grants.projects[project.id];
 	const requested = env.PI_ROLE;
-	// A signed file that no longer verifies was tampered with: fail closed into the sandbox.
-	const tampered = !!problem && !!readGrants().signature;
-	const out: SessionRole = { grant, sandbox: !!requested || !!grant?.sandbox || tampered, problem };
+	// Tampered grants fail closed into the sandbox.
+	const status = grantsStatus(readGrants(), problem);
+	const out: SessionRole = { grant, sandbox: !!requested || !!grant?.sandbox || status === "tampered", problem, notice: grantsNotice(status) };
 	const roleId = requested || grant?.default;
 	if (!roleId) return out;
 	if (!grant?.roles.includes(roleId)) return { ...out, problem: problem ?? `role ${roleId} is not granted to ${project.name}` };

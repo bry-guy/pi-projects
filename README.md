@@ -32,7 +32,8 @@ sandbox), [pi-secret-broker](https://github.com/bry-guy/pi-secret-broker) (secre
   tools), read from origin's default branch only, so it changes by a merge.
 - Grants are `~/.pi/agent/pi-roles.json`, signed with your SSH key (1Password agent, Touch ID). The trust anchor is
   `~/.local/state/pi-roles/allowed_signers`, set up on first use. Unsigned or tampered grants count as none, and a
-  tampered file puts sessions in the sandbox.
+  tampered file puts sessions in the sandbox. Once the trust anchor exists, an unsigned file with grants counts as
+  tampered. Either state shows a warning at session start; `/project sign` recovers.
 - `/project roles`: grants, signature, missing secret sources. `/project grant <repo>/<role> [--default]`,
   `/project ungrant <repo>/<role>`, `/project source <repo>/<role> <NAME> <source>`, `/project sandbox on|off`,
   `/project sign` (review and sign the file as it is). Each change signs once (one Touch ID).
