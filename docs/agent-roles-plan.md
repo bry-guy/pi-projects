@@ -4,10 +4,18 @@ Source design: [agent-roles.md](agent-roles.md).
 
 Phases (reordered 2026-11-02 by Bryan):
 1. **Phase 1, local (Mac):** Gondolin sandbox, roles and grants, role runs, secret broker. Built and finished first.
-2. **Phase 2, web:** the OpenShell spike (paused; kit in `spikes/openshell`), then web roles and scoped GitHub tokens.
+2. **Phase 2, web:** the OpenShell spike (kit in `spikes/openshell`) for agent and role runs on web workers, then web
+   roles and scoped GitHub tokens. Interactive web sessions keep the worker pod as their boundary.
 3. **Phase 3, cluster caches:** [cluster-caches.md](cluster-caches.md), to be defined later.
 Status: Phase 1 built and its done-criterion met (both roles ran on the Mac); the remaining Phase 1 work is listed
-below. Decisions at the end. `agent-roles.md` was updated in R5 (2026-11-07) and describes the current design.
+below. Decisions at the end. `agent-roles.md` describes the current design (updated 2026-11-10).
+
+Decision (Bryan, 2026-11-10): **interactive sessions are admin on the host; unattended agents run as roles.** Turning
+the sandbox on by default for interactive sessions is dropped as a goal and is not part of finishing Phase 1;
+`/project sandbox on` stays a per-project option. Role runs are always sandboxed. What makes the split usable:
+`role_agent` waits and returns the run's reply (pi-projects #7), and pi-secret-broker redacts secret values in every
+session (pi-secret-broker #1, #2). A role as an in-process subagent type was rejected (see agent-roles.md, Admin
+sessions and role runs). New role actions come from the `role-survey` skill, not up-front design.
 
 ## Images (decided 2026-11-07)
 
@@ -31,8 +39,7 @@ of pi-web runs one Debian image (`ghcr.io/bry-guy/pi-ez-web`), which `pi-web-wor
 - **R2 `pi-local-sandbox`:** spike Gondolin booting from a `fedora-minimal` OCI rootfs and pass the pi-mounts checks
   (`scripts/spike-sandbox.mjs`); then add the Dockerfile and multi-arch build, point pi-mounts at it, drop the Alpine
   image config and the musl workaround.
-- **R3 checks:** the `gh auth status` token line in a role run is the placeholder, not the real token; a subagent started
-  from a sandboxed session stays sandboxed; ruleset bypasses (infra RepositoryRole, pi-web DeployKey plus admin) behave as
+- **R3 checks:** the `gh auth status` token line in a role run is the placeholder, not the real token; ruleset bypasses (infra RepositoryRole, pi-web DeployKey plus admin) behave as
   intended or are removed; dialog forwarding in a real TUI.
 - **R4 pi-syncd per-device tokens:** pi-syncd has no authentication, so anything that reaches it can read or plant
   session text that the Mac later resumes.
@@ -64,7 +71,10 @@ Differences from the plan:
 - Role files are JSON, not YAML.
 - No separate pi-heartbeat extension: pi-background's runner writes the heartbeat on every pi RPC event (and while
   waiting on you); a per-run monit check stops runs stale for 10 minutes (`stalled`).
-- Interactive sessions stay unsandboxed unless `/project sandbox on`; role runs are always sandboxed.
+- Interactive sessions stay unsandboxed unless `/project sandbox on`; role runs are always sandboxed. Made permanent
+  2026-11-10 (admin on the host, agents in roles).
+- Subagents inherit their parent: admin in an admin session, sandboxed as the role in a role run (verified
+  2026-11-10, 11 probes).
 - infra-developer Developer tasks (apply, build) ask Bryan first (`approve: ask`); Operator tasks run without asking.
   Flip in `scripts/agent-role-file.py`.
 - Gondolin runs from a local build until the Accept-Encoding fix is upstream (PR prepared, not sent).
@@ -120,7 +130,8 @@ become workflow conveniences once grants are signed and roles are read from `ori
 
 ## Design changes from agent-roles.md
 
-1. **On web (Phase 2), the worker pod is the sandbox.** No executor pods, no Jobs and no proxy of our own. OpenShell may change this.
+1. **On web (Phase 2), the worker pod is the sandbox for interactive sessions.** No executor pods, no Jobs and no proxy
+   of our own. Agent and role runs move to OpenShell sandboxes if the spike holds (W1).
    - **Default web agent:** the project worker with no infra grant. Bryan's GitHub OAuth is removed from workers and
      replaced by a **token scoped to the project's repos plus the state repo**, minted by the trusted front end. Dotfiles
      and other repos become unpushable from web.
@@ -136,7 +147,8 @@ become workflow conveniences once grants are signed and roles are read from `ori
    - Unsigned or invalid grants are ignored, with "grant not signed; run /project grant on the Mac".
 3. **Role files are read from `origin/<default>`** after a fetch, so a role changes only through a merge on GitHub.
    Checkout sync can move a local `main`, so local branches can't be trusted.
-4. **Mac interactive sessions: Gondolin, tools only** (the host is Bryan's whole home).
+4. **Mac sandboxed sessions (role runs, and projects with `/project sandbox on`): Gondolin, tools only** (the host is
+   Bryan's whole home). Interactive sessions are admin on the host by default (2026-11-10).
    - Gap 1 is handled by a per-role tool policy: MCP servers only from the role's config, and pi-lens and pi-lsp off in sandboxed sessions.
    - Mac role runs get Gondolin placeholders and egress for free.
 5. **Cheap hardening:** host-side git in pi-sync and pi-web passes `-c core.fsmonitor=false -c core.hooksPath=/dev/null`.
@@ -172,17 +184,18 @@ M0-M6. M1, M3, M4 and M5 need a laptop session. M2 can be built anywhere.
 - Granted roles injected into the session prompt. `/project roles` shows grants, signature state and missing secret sources.
 - `project.json` writes keep unknown keys, re-reading the file at `store.ts:142,148,267`.
 
-### M3: pi-mounts, the sandboxed interactive session on the Mac
+### M3: pi-mounts, the sandboxed session on the Mac
 - Gondolin VM per session at module level, keyed by project and role.
 - Built-in tools run in the VM, plus the per-role tool policy.
 - Egress and secrets come from the role.
-- Opt-in per project at first.
+- Opt-in per project for interactive sessions, and it stays opt-in (2026-11-10); always on for role runs.
 - Verify: the M1 checks as tests, plus one real worktree change end to end. pi-sync, pi-projects and pi-background still work from the host.
 
 ### M4: role_agent on the Mac
-- Check the signed grant, then start a run with `PI_ROLE` through pi-background's runner (decision 3), and return the run id.
+- Check the signed grant, then start a run with `PI_ROLE` through pi-background's runner (decision 3). Since
+  2026-11-10 the call waits and returns the run's reply; `background: true` returns the run id at once.
 - pi-heartbeat extension and the monit check per run (decision 3). A blocked run waits (decision 4).
-- Report the result back to the caller.
+- Report the result back to the caller (tool result, or a message for background runs).
 - Verify:
   - an ungranted or unsigned role is refused;
   - a granted role pushes a branch;
@@ -206,11 +219,12 @@ Update `agent-roles.md` to match. Phase 1 is done when `pi-web-developer` and `i
 
 ## Phase 2: web (paused until Phase 1 is done)
 
-### W1: OpenShell spike (injection-level parity on web)
+### W1: OpenShell spike (injection-level parity for agent runs on web)
 Kit ready in `spikes/openshell` (tests only our setup: login rotation, the pi shim through the real proxy, the worker
 image with our disk and SSE, pi-syncd). Runs from the laptop with admin approval.
-If it works, workspaced gets an `openshell` provider next to `local` and `kubernetes` (same API, so web is unchanged);
-the costs are allow-only egress for workers, placeholder logins, and moving worker disks.
+If it works, workspaced gets an `openshell` provider next to `local` and `kubernetes` (same API, so web is unchanged)
+for agent and role runs; interactive web sessions stay on today's provider. The costs are allow-only egress for those
+workers, placeholder logins, and moving their disks.
 
 ### W2: Web roles (was M5)
 - GitHub App installation tokens for workers, limited to the project's repos plus the state repo (decision 1).
@@ -235,7 +249,7 @@ Build `pi-web-worker` and `pi-web` (see Images), multi-arch, and move workers, t
 
 ### W1 background: OpenShell notes
 Agent Sandbox CRDs on k3s, a GitHub provider with per-repo `git-receive-pack`, and an Anthropic OAuth provider with refresh.
-If it works, worker pods become OpenShell sandboxes, which overlaps with and could replace parts of pi-workspaced.
+If it works, agent and role worker pods become OpenShell sandboxes, which overlaps with parts of pi-workspaced.
 Risks: 0.1.x, a CRD and controller to run. Not on the Mac (agent-inside means the TUI attaches to a container).
 The Mac stays on Gondolin (decided).
 
@@ -287,3 +301,5 @@ See [cluster-caches.md](cluster-caches.md). Not scheduled.
 5. **Roles: both. `pi-web/pi-web-developer` first, then `infra/infra-developer`** (needs the k3s API spike, M1(i)).
 6. Branch protection on `main`: rulesets plus CODEOWNERS (2026-11-07, see Phase 1 status).
 7. **Images (2026-11-07):** `pi-local-sandbox`, `pi-web-worker`, `pi-web`, all Fedora, one per use (see Images).
+8. **Admin on the host, agents in roles (2026-11-10):** interactive sessions are admin and unsandboxed; unattended
+   agents run as sandboxed roles; OpenShell is for agent runs on web only (see the decision at the top).

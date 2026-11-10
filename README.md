@@ -28,6 +28,9 @@ Design: [docs/agent-roles.md](docs/agent-roles.md). Needs [pi-mounts](https://gi
 sandbox), [pi-secret-broker](https://github.com/bry-guy/pi-secret-broker) (secrets, host actions) and
 [pi-background](https://github.com/bry-guy/pi-background) (role runs).
 
+Interactive sessions run on the host as you (admin). Unattended agents run as roles, always sandboxed, with only the
+role's credentials. `/project sandbox on` sandboxes a project's interactive sessions too; it is off by default.
+
 - A role is `<repo>/.pi/roles/<role>.json` (egress hosts, secrets with the hosts they're for, broker actions, extra host
   tools), read from origin's default branch only, so it changes by a merge.
 - Grants are `~/.pi/agent/pi-roles.json`, signed with your SSH key (1Password agent, Touch ID). The trust anchor is

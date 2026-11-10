@@ -1,6 +1,7 @@
 # Agent roles and sandboxed projects
 
-Status: Phase 1 (Mac) built; this doc describes the current design (updated 2026-11-07). Build status, checks and
+Status: Phase 1 (Mac) built; this doc describes the current design (updated 2026-11-10: interactive sessions are
+admin on the host, unattended agents run as roles). Build status, checks and
 next phases: [agent-roles-plan.md](agent-roles-plan.md).
 
 ## Problem
@@ -13,21 +14,45 @@ next phases: [agent-roles-plan.md](agent-roles-plan.md).
 
 - **Repos define roles.** Repos are permanent, so a role lives with its repo in `.pi/roles/<role>.json`. A role lists egress hosts, secret names (not values) and broker actions.
 - **Projects grant roles.** A project is a short-lived grouping of repos for a goal. Its signed grant lists which repo roles its agents may take on.
-- **One role per session.** Roles don't compose. The project agent (the one you talk to) runs as the grant's default role, which can be any granted role. With no default it runs sandboxed with no grants: a VM or pod with no role secrets and no role egress. To do another role's work it starts an agent as that role, with the task. That agent has its own VM or pod, egress and secrets, and reports back as text.
+- **Interactive sessions are admin on the host.** Bryan starts every session as himself, unsandboxed, with his own credentials. `/project sandbox on` stays as a per-project option for code you don't trust; it is off by default and not a goal to turn on. A sandboxed interactive session runs as the grant's default role (or with no role secrets and no role egress if there is none).
+- **Unattended agents run as roles.** One role per run; roles don't compose. A role run is always sandboxed (`PI_ROLE` forces it) and holds only that role's credentials. To do a role's work, the admin session starts a role run with the task; it has its own VM or pod, egress and secrets, and reports back as text.
 - **No prompts for granted work.** Granting a role to a project is the decision. Anything the role allows runs without asking.
-- **Admin work is out of scope for now.** Agents propose admin commands and Bryan runs them.
+- **New role actions come from admin work.** Roles aren't designed up front. The `role-survey` skill looks at what admin sessions did repeatedly and proposes role changes as PRs to `.pi/roles`, which wait for Bryan's review.
 
 ## Where things live
 
 | What | Where | Changed by |
 |---|---|---|
 | Role definition (egress, secret names, broker actions) | `<repo>/.pi/roles/<role>.json` | a merge to the repo's `main` |
-| Grant (which repo roles a project may use, default role, sandbox on/off) | `~/.pi/agent/pi-roles.json`, signed with `ssh-keygen -Y` and checked against an allowed-signers file outside dotfiles | Bryan (`/project grant`, `/project sign`) |
+| Grant (which repo roles a project may use, default role, sandbox on/off, off by default) | `~/.pi/agent/pi-roles.json`, signed with `ssh-keygen -Y` and checked against an allowed-signers file outside dotfiles | Bryan (`/project grant`, `/project sign`) |
 | Secret sources (`GH_TOKEN` → `op://…` or a k8s Secret) | global pi config, keyed by repo role, e.g. `infra/infra-developer` | Bryan |
 | Shared pieces (the `tooling` host group, default image) | global pi config | Bryan |
 | Pod grants | the pi-workspaced gateway's grants | a PR to infra |
 
 Repo `AGENTS.md` `## Roles` sections stay as human documentation, not enforcement.
+
+## Admin sessions and role runs
+
+Built on the Mac (2026-11-10).
+
+- **Who runs where.** Interactive sessions: Bryan, on the host, unsandboxed. Role runs: a separate `pi` process in a
+  Gondolin VM, with only the role's egress, secret placeholders and broker actions. On web, interactive sessions run
+  in the project's worker pod as today; agent runs move to OpenShell in Phase 2.
+- **Handing work to a role.** An unsandboxed project session with signed grants lists the granted roles in its system
+  prompt and is told to prefer `role_agent` for work that fits one, and to do the work itself when it needs access no
+  role has. `role_agent` waits for the run and returns its final reply as the tool result; Esc stops the run. With
+  `background: true` it returns at once and the reply arrives later as a message. A waiting call also turns into that
+  when the run starts waiting on Bryan or passes 15 minutes.
+- **Subagents inherit their parent.** The `subagent` tool runs children in the parent's process with the parent's
+  extensions: in an admin session they are admin, in a role run they are sandboxed as that role (11-probe comparison,
+  2026-11-10). A subagent can't switch roles.
+- **Why not a role as a subagent type.** `@gotgenes/pi-subagents` drops unknown agent frontmatter, has no hook around
+  child creation, and the sandbox extension sees a child's agent type only as text in its system prompt. A missed
+  match would run the child as admin on the host without any error. The separate-process role run is the tested
+  boundary, so the fix was making `role_agent` wait (foreground) instead.
+- **Redaction.** pi-secret-broker replaces secret values with `[redacted:<kind>]` in tool output, `!command` output and
+  every model request, in every session, admin or role. It is best effort, not a boundary: commands still get the
+  secrets, and encoded or split values get through. Details: [pi-secret-broker README, Redaction](https://github.com/bry-guy/pi-secret-broker#redaction).
 
 ## Sketch
 
@@ -79,17 +104,17 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 
 ## Dispatching role agents
 
-- **Tool:** pi-projects adds `role_agent(role, task, cwd?)`. It asks the runner to start a separate `pi` as that role, with its own VM or pod, and later reports the result as text. The tool only asks; the runner supervises (see Role agent runs). The role definition comes from `repos/<repo>/.pi/roles/` and the grant from the signed grants file, never from `cwd`. `cwd` changes which code the agent works on, not what it may do.
-- **Prompt:** at session start pi-projects injects the granted roles, e.g. "You may dispatch infra/infra-operator and infra/infra-developer with `role_agent` for work that needs their access. Use subagents for reading and exploring."
+- **Tool:** pi-projects adds `role_agent(role, task, cwd?, background?)`. It asks the runner to start a separate `pi` as that role, with its own VM or pod, waits, and returns the run's reply as text (`background: true`, a run waiting on Bryan, or one past 15 minutes report later as a message). The tool only asks; the runner supervises (see Role agent runs). The role definition comes from `repos/<repo>/.pi/roles/` and the grant from the signed grants file, never from `cwd`. `cwd` changes which code the agent works on, not what it may do.
+- **Prompt:** at session start an unsandboxed session with signed grants lists the granted roles with their descriptions, then "Prefer role_agent for work that fits one of these roles: it runs sandboxed with only that role's credentials. Do the work yourself when it needs access no role has." A role run sees the other granted roles it can delegate to.
 - **Errors name the role:** a blocked host or missing secret says which granted role has it, e.g. "api.cloudflare.com is not allowed for this role; infra/infra-developer has it, use role_agent."
 - **A new session, not a fork.** A role agent starts as a fresh session in the project with just the task. It appears in the project's session history and can be opened, continued or taken over. Forking the calling session (`pi --fork`) to pass context is a later option.
-- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified.
-- **Subagents stay** for same-role work. `@gotgenes/pi-subagents` runs children in the parent's process and can only change their working directory, so they can't switch roles or do more than their parent.
+- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified. pi-web shows no role today; showing it comes with web roles.
+- **Subagents stay** for same-role work. They inherit the parent's role or admin access and can't switch roles (see Admin sessions and role runs).
 
 ## Role agent runs
 
 `role_agent` hands the run to a **runner** outside the calling session, so a run survives the caller closing. A new
-session appears in the project, and the result is reported back to the caller.
+session appears in the project, and the reply is returned to the caller (or sent to it as a message for background runs).
 
 | | Mac | pi-web (Phase 2) |
 |---|---|---|
@@ -121,9 +146,9 @@ Alpine: musl breaks prebuilt tools. Details in [agent-roles-plan.md](agent-roles
 
 ## Egress on web
 
-No home-grown egress proxy. Phase 2 spikes OpenShell on k3s, which enforces hostname egress and injects credentials as
-placeholders, as Gondolin does on the Mac. Without it, worker pods keep today's NetworkPolicy (no cluster or LAN
-addresses, open internet).
+No home-grown egress proxy. Phase 2 uses OpenShell on k3s for agent and role runs on web workers only: it enforces
+hostname egress and injects credentials as placeholders, as Gondolin does on the Mac. Interactive web sessions keep
+today's model: the worker pod is the boundary, with today's NetworkPolicy (no cluster or LAN addresses, open internet).
 
 ## Rules
 
@@ -139,4 +164,5 @@ as a secret source, Gondolin on the Mac, GitHub Apps per role and infra's roles.
 
 ## First step
 
-List what each project agent keeps failing at, add that access to the matching repo role once, and have the project agent start that role instead of asking.
+Run the `role-survey` skill: it lists what admin sessions keep doing by hand and proposes the matching role actions as
+PRs, so the next time an admin session can hand that work to a role.
