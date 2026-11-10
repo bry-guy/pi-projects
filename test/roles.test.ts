@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
@@ -84,4 +84,39 @@ test("PI_ROLE must be granted; tampering fails closed into the sandbox", () => {
 	const t = r.sessionRole(p, {});
 	assert.equal(t.sandbox, true);
 	assert.equal(t.grant, undefined);
+});
+
+test("unsigned grants fail closed once a trust anchor exists", () => {
+	const { p } = fixture({});
+	writeFileSync(r.rolesFile(), JSON.stringify({ projects: { [p.id]: { name: "p", default: "app/dev", roles: ["app/dev"] } }, sources: {} }));
+	const t = r.sessionRole(p, {});
+	assert.equal(t.sandbox, true);
+	assert.equal(t.grant, undefined);
+	assert.equal(t.roleId, undefined);
+	assert.match(t.notice ?? "", /signature check/);
+});
+
+test("unsigned grants without a trust anchor: no grants, no sandbox", () => {
+	const { p } = fixture({});
+	rmSync(join(tmp, "allowed_signers"));
+	writeFileSync(r.rolesFile(), JSON.stringify({ projects: { [p.id]: { name: "p", default: "app/dev", roles: ["app/dev"] } }, sources: {} }));
+	const t = r.sessionRole(p, {});
+	assert.equal(t.sandbox, false);
+	assert.equal(t.grant, undefined);
+	assert.match(t.notice ?? "", /not signed/);
+	assert.equal(r.grantsStatus(r.readGrants(), r.trustedGrants().problem), "unsigned");
+});
+
+test("missing or empty grants and signed grants show no notice", () => {
+	const { p } = fixture({});
+	assert.equal(r.sessionRole(p, {}).notice, undefined);
+	assert.equal(r.sessionRole(p, {}).sandbox, false);
+	writeFileSync(r.rolesFile(), JSON.stringify({ projects: {}, sources: {} }));
+	assert.equal(r.sessionRole(p, {}).notice, undefined);
+	assert.equal(r.sessionRole(p, {}).sandbox, false);
+	r.saveSignedGrants({ projects: { [p.id]: { name: "p", default: "app/dev", roles: ["app/dev"] } }, sources: {} });
+	const t = r.sessionRole(p, {});
+	assert.equal(t.notice, undefined);
+	assert.equal(t.sandbox, false);
+	assert.equal(t.roleId, "app/dev");
 });

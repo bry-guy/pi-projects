@@ -39,6 +39,7 @@ import {
 	agentKeys,
 	allowedSignersFile,
 	type GrantsFile,
+	grantsStatus,
 	loadRole,
 	readGrants,
 	type SessionRole,
@@ -152,6 +153,7 @@ export default function (pi: ExtensionAPI) {
 		ui = ctx.ui;
 		refresh(ctx, { roleFetch: true });
 		if (!current) return;
+		if (role?.notice) ctx.ui.notify(role.notice, "warning");
 		if (isStateRepo()) {
 			// Pull other machines' memory and repo list without delaying the start; reload when it lands.
 			pullState()
@@ -470,7 +472,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		const g = readGrants();
 		const { problem } = trustedGrants();
-		if (g.signature && problem && !reviewed) {
+		if (grantsStatus(g, problem) === "tampered" && !reviewed) {
 			const ok = await ctx.ui.confirm("Grants changed outside /project", `${problem}. Re-sign the file as it is now?`);
 			if (!ok) return undefined;
 		}
