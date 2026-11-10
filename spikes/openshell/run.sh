@@ -96,15 +96,20 @@ sx() { os sandbox exec -n pi-spike --no-login-shell -- sh -c "$1"; }
 
 step_t2() {   # our pi + anthropic-auth + shim, through the real proxy (TLS interception, Node CA)
   say "T2 pi in a sandbox from the worker image, Claude login via the gateway"
-  os sandbox create --name pi-spike --from "$IMAGE" --provider anthropic-sub --detach -- sleep infinity
-  os policy update pi-spike --rule-name npm --binary /usr/local/bin/node \
-    --add-endpoint registry.npmjs.org:443:read-only:rest:enforce --wait
+  # t2-policy.yaml = worker policy + npm rule with allow_encoded_slash (scoped packages are %2F-encoded)
+  os sandbox create --name pi-spike --from "$IMAGE" --provider anthropic-sub --policy t2-policy.yaml --detach -- sleep infinity
   sx 'mkdir -p /sandbox/agent /sandbox/ext /sandbox/work'
-  os sandbox upload pi-spike ./openshell-oauth.ts /sandbox/ext/
+  os sandbox upload pi-spike ./openshell-oauth.ts /sandbox/ext/ --no-git-ignore
   sx 'printf "%s" "{\"packages\":[\"npm:@gotgenes/pi-anthropic-auth\"],\"extensions\":[\"/sandbox/ext/openshell-oauth.ts\"]}" > /sandbox/agent/settings.json'
-  sx "cd /sandbox/work && PI_CODING_AGENT_DIR=/sandbox/agent ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-openshell $PI --no-session --model anthropic/claude-haiku-5-5 -p 'Reply with exactly: OPENSHELL-OK'" \
-    | tee /dev/stderr | grep -q OPENSHELL-OK && pass "T2 reply through the real proxy" || fail "T2"
-  sx 'case "$OPENSHELL_ANTHROPIC_PLACEHOLDER" in *openshell:resolve:env:*) echo "PASS  T2 agent holds only a placeholder";; *) echo "FAIL  T2 placeholder";; esac'
+  local out t0 t1; out="$(mktemp)"; t0=$(date +%s)
+  if ! sx "cd /sandbox/work && PI_CODING_AGENT_DIR=/sandbox/agent ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-openshell $PI --no-session --model anthropic/claude-haiku-5-5 -p 'Reply with exactly: OPENSHELL-OK'" 2>&1 | tee "$out"; then
+    fail "T2 pi exited non-zero"; return 1
+  fi
+  t1=$(date +%s); echo "pi finished in $((t1 - t0))s"
+  grep -q OPENSHELL-OK "$out" || { fail "T2 reply"; return 1; }
+  pass "T2 reply through the real proxy"
+  sx 'case "$OPENSHELL_ANTHROPIC_PLACEHOLDER" in *openshell:resolve:env:*) exit 0;; *) exit 1;; esac' || { fail "T2 placeholder"; return 1; }
+  pass "T2 agent holds only a placeholder"
 }
 
 WORKER_HOST="Host: default--worker-spike.openshell.localhost:8080"   # the gateway routes exposed services by Host header
