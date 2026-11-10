@@ -101,6 +101,18 @@ test("clone, worktree, scan and doctor", () => {
 	assert.ok(issues.some((i) => i.includes("cwd no longer exists")));
 });
 
+test("an adopted clone records the origin branch it follows, not its local branch name", () => {
+	const p = s.createProject("fork");
+	const origin = mkdtempSync(join(tmpdir(), "origin-"));
+	execFileSync("git", ["-C", origin, "init", "-q", "-b", "master"]);
+	execFileSync("git", ["-C", origin, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init"]);
+	const dest = join(p.path, "repos", "code");
+	execFileSync("git", ["clone", "-q", origin, dest]);
+	execFileSync("git", ["-C", dest, "checkout", "-q", "-b", "fork-main", "--track", "origin/master"]);
+	assert.equal(s.recordExistingRepos(p), 1);
+	assert.equal(s.loadProject(p.path).repos?.[0].branch, "master");
+});
+
 test("clone records repos; missing repos are listed; remove forgets", () => {
 	const src = mkdtempSync(join(tmpdir(), "src-"));
 	execFileSync("git", ["init", "-q", "-b", "main", src]);
