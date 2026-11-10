@@ -323,14 +323,18 @@ export function cloneRepo(p: Project, url: string, name?: string): string {
 	const dest = join(p.path, "repos", n);
 	if (existsSync(dest)) throw new Error(`repos/${n} already exists.`);
 	git(["clone", url, dest]);
-	let branch: string | undefined;
-	try {
-		branch = git(["symbolic-ref", "--short", "HEAD"], dest);
-	} catch {
-		// detached or empty repo
-	}
-	addRepoRef(p, { name: n, url, branch });
+	addRepoRef(p, { name: n, url, branch: remoteBranch(dest) });
 	return dest;
+}
+
+/** The origin branch a checkout follows: the only branch name another machine can clone. A local name may differ. */
+function remoteBranch(dir: string): string | undefined {
+	try {
+		const upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], dir);
+		return upstream.startsWith("origin/") ? upstream.slice("origin/".length) : undefined;
+	} catch {
+		return undefined; // detached, empty, or a local-only branch: clone the default branch elsewhere
+	}
 }
 
 function addRepoRef(p: Project, ref: RepoRef): void {
@@ -352,11 +356,7 @@ export function recordExistingRepos(p: Project): number {
 		} catch {
 			continue; // no remote: cannot be re-cloned elsewhere
 		}
-		let branch: string | undefined;
-		try {
-			branch = git(["symbolic-ref", "--short", "HEAD"], join(p.path, "repos", name));
-		} catch {}
-		addRepoRef(p, { name, url, branch });
+		addRepoRef(p, { name, url, branch: remoteBranch(join(p.path, "repos", name)) });
 		added++;
 	}
 	return added;
