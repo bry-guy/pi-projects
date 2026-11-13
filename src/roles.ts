@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { agentDir, type Project, SAFE_GIT } from "./store.ts";
+import { agentDir, type Project, ROLE_RUN_PREFIX, SAFE_GIT } from "./store.ts";
 
 const NAMESPACE = "pi-roles";
 const PRINCIPAL = "pi-roles";
@@ -304,4 +304,13 @@ export function roleLines(r: SessionRole | undefined, describe: (roleId: string)
 	}
 	if (r.problem) out.push(`Roles: ${r.problem}.`);
 	return out;
+}
+
+/** First message and env for a role run started by role_agent. */
+export function roleRunStart(role: string, projectName: string, task: string): { msg: string; env: Record<string, string> } {
+	return {
+		msg: `${ROLE_RUN_PREFIX}${role} for project ${projectName}, started by another session to do one task. Nobody is watching this session; when you're done, end with a short summary of what you did, what you pushed, and anything left undone.\n\nTask:\n${task}`,
+		// Role runs stay local: their reply already reaches the calling session, so they'd only crowd the synced lists.
+		env: { PI_ROLE: role, PI_SYNC_ALL_SESSIONS: "off" },
+	};
 }

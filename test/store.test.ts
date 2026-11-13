@@ -42,6 +42,21 @@ test("membership is derived from session cwd", () => {
 	assert.deepEqual(s.projectSessions(p).map((x) => x.header.id).sort(), ["s1", "s2"]);
 });
 
+test("sessionInfo marks role runs by the first user message's prefix", () => {
+	const p = s.createProject("a");
+	const write = (id: string, text: string) => {
+		const file = writeSession(p.path, id);
+		writeFileSync(file, `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text }] } })}\n`, { flag: "a" });
+		return file;
+	};
+	const run = write("s1", `${s.ROLE_RUN_PREFIX}pi-web/dev for project a, ...\n\nTask:\nfix it`);
+	const normal = write("s2", "please fix it");
+	const quoted = write("s3", `look at this: ${s.ROLE_RUN_PREFIX}pi-web/dev`);
+	assert.equal(s.sessionInfo(run).roleRun, true);
+	assert.deepEqual(s.sessionInfo(normal), { title: "please fix it", roleRun: false });
+	assert.equal(s.sessionInfo(quoted).roleRun, false);
+});
+
 test("rename moves sessions, rewrites cwd and parentSession", () => {
 	const p = s.createProject("old");
 	const f1 = writeSession(p.path, "s1");
@@ -152,14 +167,14 @@ test("state repo: share, remember on two machines merges memory", async () => {
 	assert.equal(existsSync(join(a, ".gitignore")), true);
 });
 
-test("sessionTitle prefers name, then first user message", () => {
+test("sessionInfo title prefers name, then first user message", () => {
 	const p = s.createProject("titles");
 	const file = writeSession(p.path, "t1");
-	assert.match(s.sessionTitle(file), /t1\.jsonl$/);
+	assert.match(s.sessionInfo(file).title, /t1\.jsonl$/);
 	writeFileSync(file, readFileSync(file, "utf8") + `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "hello there" }] } })}\n`);
-	assert.equal(s.sessionTitle(file), "hello there");
+	assert.equal(s.sessionInfo(file).title, "hello there");
 	writeFileSync(file, readFileSync(file, "utf8") + `${JSON.stringify({ type: "session_info", name: "Named" })}\n`);
-	assert.equal(s.sessionTitle(file), "Named");
+	assert.equal(s.sessionInfo(file).title, "Named");
 });
 
 test("saves keep keys written to project.json after this copy was loaded", () => {

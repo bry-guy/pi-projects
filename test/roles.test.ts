@@ -120,3 +120,10 @@ test("missing or empty grants and signed grants show no notice", () => {
 	assert.equal(t.sandbox, false);
 	assert.equal(t.roleId, "app/dev");
 });
+
+test("roleRunStart: role-run prefix, and the run does not sync", () => {
+	const { msg, env } = r.roleRunStart("pi-web/dev", "proj", "do it");
+	assert.ok(msg.startsWith(s.ROLE_RUN_PREFIX));
+	assert.ok(msg.endsWith("Task:\ndo it"));
+	assert.deepEqual(env, { PI_ROLE: "pi-web/dev", PI_SYNC_ALL_SESSIONS: "off" });
+});
