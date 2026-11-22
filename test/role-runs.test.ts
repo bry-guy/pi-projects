@@ -31,7 +31,7 @@ function clock() {
 	return { now: () => t, sleep: async (ms: number) => void (t += ms) };
 }
 
-const run = (file: string, parentFile = "/parent.jsonl") => ({ parentFile, pid: 7, role: "r/dev", file });
+const run = (file: string, parentFile = "/parent.jsonl") => ({ parentFile, pid: 7, role: "r/dev", file, started: Date.now() });
 const rec = (status: string, extra: Partial<RunInfo> = {}): RunInfo => ({ pid: 7, status, ...extra });
 
 beforeEach(() => {
@@ -193,4 +193,20 @@ test("a missing record is not death while the process lives", async () => {
 	assert.equal(sent.length, 0);
 	deliver(() => false);
 	assert.match(sent[0].content, /ended: died/);
+});
+
+test("a live pid that never gets a record is bounded: handover in the foreground, died in delivery", async () => {
+	assert.deepEqual(waitStep(undefined, "r/dev", 15 * 60_000, false, undefined, { gone: false }).act, "handover");
+	fakeBg([undefined]);
+	const r = await waitForRun(run(sessionFile("never")), { ...clock(), alive: () => true });
+	assert.equal(r.background, true);
+	assert.match(r.text, /no run record after 15m 00s/);
+	const sent: any[] = [];
+	sessions.set("/parent.jsonl", { sendMessage: (m) => sent.push(m) });
+	const started = pending[0]!.started;
+	deliver(() => true, () => started + 14 * 60_000);
+	assert.equal(sent.length, 0);
+	deliver(() => true, () => started + 15 * 60_000);
+	assert.match(sent[0].content, /ended: died/);
+	assert.equal(pending.length, 0);
 });

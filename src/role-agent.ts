@@ -53,7 +53,7 @@ export function registerRoleAgent(pi: ExtensionAPI) {
 			const { msg, env } = roleRunStart(role, project.name, params.task);
 			// An older pi-background ignores `name`; the run then keeps its first-message title.
 			const { file, pid } = start({ cwd, msg, env, name: runName(role, params.task) });
-			const run = { parentFile, pid, role, file };
+			const run = { parentFile, pid, role, file, started: Date.now() };
 			if (params.background || !pid) {
 				if (pid) track(run);
 				return {

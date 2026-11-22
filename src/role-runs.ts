@@ -22,8 +22,6 @@ export interface BgApi {
 	runs(): RunInfo[];
 	/** Missing in pi-background before stop() was published. */
 	stop?(pid: number): boolean;
-	/** Newest pi-summarize activity line of a session file; missing in older pi-background. */
-	activity?(file: string): string | undefined;
 }
 export interface Sender {
 	sendMessage(message: any, options?: any): void;
@@ -33,6 +31,8 @@ export interface Pending {
 	pid: number;
 	role: string;
 	file: string;
+	/** When the run was started (ms); bounds how long a live pid without a record is waited on. */
+	started: number;
 }
 
 export const bg = (): BgApi | undefined => (globalThis as any)[Symbol.for("pi-background.v1")];
@@ -85,7 +85,7 @@ export function pidAlive(pid: number): boolean {
 
 /**
  * The newest pi-summarize activity line in a session file, from its last `max` bytes (a cut first or partial last
- * line is skipped). Only those entries, never model text or thinking. pi-background's activity() wins when present.
+ * line is skipped). Only those entries, never model text or thinking.
  */
 export function latestActivity(file: string, max = 64 * 1024): string | undefined {
 	let fd: number | undefined;
@@ -114,7 +114,7 @@ export function latestActivity(file: string, max = 64 * 1024): string | undefine
 }
 
 /** Sends ended runs' results to their parent sessions; runs whose parent isn't open here stay pending. */
-export function deliver(alive = pidAlive) {
+export function deliver(alive = pidAlive, now = Date.now) {
 	if (!pending.length) return;
 	const runs = bg()?.runs() ?? [];
 	for (const p of [...pending]) {
@@ -122,8 +122,8 @@ export function deliver(alive = pidAlive) {
 		if (!to) continue;
 		const r = runs.find((x) => x.pid === p.pid);
 		if (r && !FINAL.has(r.status)) continue;
-		// No record can be a record caught mid-rewrite: it is dead only when its process is gone too.
-		if (!r && alive(p.pid)) continue;
+		// No record but a live pid: still starting, unless it's been too long (the pid may have been reused).
+		if (!r && alive(p.pid) && now() - p.started < WAIT_LIMIT) continue;
 		pending.splice(pending.indexOf(p), 1);
 		const status = r?.status ?? "died";
 		to.sendMessage(
@@ -173,7 +173,13 @@ export function waitStep(
 	const progress = (fallback: string) => ({ act: "wait" as const, progress: `${role}: ${o.activity || fallback} · ${clock(elapsed)}` });
 	if (aborted) return { act: "stop" };
 	// A missing record is a run still starting, or one caught mid-rewrite: dead only once its process is gone.
-	if (!run) return elapsed < START_GRACE ? progress("starting") : o.gone === false ? progress("running") : { act: "final", status: "died" };
+	if (!run) {
+		if (elapsed < START_GRACE) return progress("starting");
+		if (o.gone !== false) return { act: "final", status: "died" };
+		// The pid may belong to another process now: hand over, and deliver() reports it died.
+		if (elapsed >= limit) return { act: "handover", why: `it has no run record after ${clock(elapsed)}` };
+		return progress("running");
+	}
 	if (FINAL.has(run.status)) return { act: "final", status: run.status, error: run.error };
 	const q = run.waiting?.[0];
 	if (q) return { act: "handover", why: `it is waiting on you: ${q.title}${q.message ? ` (${q.message})` : ""}` };
@@ -213,7 +219,7 @@ export async function waitForRun(
 	for (;;) {
 		const api = bg();
 		const r = api?.runs().find((x) => x.pid === run.pid);
-		const activity = (api?.activity ?? latestActivity)(run.file);
+		const activity = latestActivity(run.file);
 		const gone = r ? undefined : !(o.alive ?? pidAlive)(run.pid);
 		const step = waitStep(r, run.role, now() - t0, !!o.signal?.aborted, o.limit, { activity, gone });
 		if (step.act === "wait") {
