@@ -212,10 +212,14 @@ export function projectSessions(p: Project): SessionFile[] {
 	return allSessionFiles().filter((s) => s.header.cwd && isInside(s.header.cwd, p.path));
 }
 
-/** Display title: latest session name, else the first user message, else the file name. */
-export function sessionTitle(file: string): string {
+/** Start of a role run's first user message (written by role_agent); marks the session as a role run. */
+export const ROLE_RUN_PREFIX = "You are running as role ";
+
+/** Display title (latest session name, else the first user message, else the file name), and whether it is a role run. */
+export function sessionInfo(file: string): { title: string; roleRun: boolean } {
 	let name: string | undefined;
 	let first: string | undefined;
+	let roleRun = false;
 	for (const line of readFileSync(file, "utf8").split("\n")) {
 		if (!line.includes('"session_info"') && (first || !line.includes('"user"'))) continue;
 		try {
@@ -224,11 +228,14 @@ export function sessionTitle(file: string): string {
 			else if (!first && e.type === "message" && e.message?.role === "user") {
 				const c = e.message.content;
 				const t = typeof c === "string" ? c : c?.find?.((x: any) => x.type === "text")?.text;
-				if (t) first = t.replace(/\s+/g, " ").trim().slice(0, 60);
+				if (t) {
+					first = t.replace(/\s+/g, " ").trim().slice(0, 60);
+					roleRun = t.startsWith(ROLE_RUN_PREFIX);
+				}
 			}
 		} catch {}
 	}
-	return name ?? first ?? basename(file);
+	return { title: name ?? first ?? basename(file), roleRun };
 }
 
 function rewriteHeader(from: string, to: string, header: SessionFile["header"]): void {

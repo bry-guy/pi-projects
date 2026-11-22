@@ -47,6 +47,8 @@ role's credentials. `/project sandbox on` sandboxes a project's interactive sess
   While it waits, the call's progress reads `<role>: <activity> · 6m 20s`, where `<activity>` is the run's newest
   [pi-summarize](https://github.com/bry-guy/pi-summarize) activity line (else `starting` / `running`). A run whose
   record is missing counts as died only once its process is gone too.
+  Role runs are not synced by pi-sync (unless you continue one yourself with `/bg` or `/resume`) and are
+  hidden from the `/project` session list unless you pick `Show role runs (N)`.
 - Unsandboxed sessions with signed grants see the granted roles in the system prompt, with a nudge to use
   `role_agent` for work that fits one.
 - Host git run by pi-projects never runs repo hooks or fsmonitor (agents can write `.git`).
