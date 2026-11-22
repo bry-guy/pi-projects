@@ -166,6 +166,15 @@ test("waitForRun reports activity from the session file, never assistant text", 
 	assert.deepEqual(updates, ["r/dev: Running the e2e suite · 0s"]);
 });
 
+test("waitForRun prefers the run record's activity; null means nothing, not the stale session line", async () => {
+	const file = sessionFile("secret plan");
+	writeFileSync(file, `${activity("Previous step")}\n`, { flag: "a" });
+	fakeBg([{ ...rec("running"), activity: "running bash" }, { ...rec("running"), activity: null }, rec("done")]);
+	const updates: string[] = [];
+	await waitForRun(run(file), { ...clock(), onUpdate: (t) => updates.push(t) });
+	assert.deepEqual(updates, ["r/dev: running bash · 0s", "r/dev: running · 5s"]);
+});
+
 test("latestActivity: truncated last line, cut first line, none", () => {
 	const d = mkdtempSync(join(tmpdir(), "role-act-"));
 	const f = join(d, "s.jsonl");

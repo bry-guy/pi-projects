@@ -16,6 +16,8 @@ export interface RunInfo {
 	status: string;
 	error?: string;
 	waiting?: { title: string; message?: string }[];
+	/** What the run is doing now; null when nothing. Absent in pi-background before it recorded this. */
+	activity?: string | null;
 }
 export interface BgApi {
 	start(o: { cwd: string; msg: string; env?: Record<string, string>; name?: string }): { file: string; pid: number };
@@ -219,7 +221,8 @@ export async function waitForRun(
 	for (;;) {
 		const api = bg();
 		const r = api?.runs().find((x) => x.pid === run.pid);
-		const activity = latestActivity(run.file);
+		// The record's activity is live; the session's pi-summarize line is written when a step ends (older pi-background only).
+		const activity = r && r.activity !== undefined ? (r.activity ?? undefined) : latestActivity(run.file);
 		const gone = r ? undefined : !(o.alive ?? pidAlive)(run.pid);
 		const step = waitStep(r, run.role, now() - t0, !!o.signal?.aborted, o.limit, { activity, gone });
 		if (step.act === "wait") {
