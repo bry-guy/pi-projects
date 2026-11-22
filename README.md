@@ -44,6 +44,9 @@ role's credentials. `/project sandbox on` sandboxes a project's interactive sess
   credentials (pi-background runs it). The call waits and returns the run's final reply; Esc stops the run (with a
   pi-background that has `stop()`). With `background: true`, or once the run asks the user something or passes 15
   minutes, the reply comes back to the calling session as a message instead. Role runs can't change grants.
+  While it waits, the call's progress reads `<role>: <activity> · 6m 20s`, where `<activity>` is the run's newest
+  [pi-summarize](https://github.com/bry-guy/pi-summarize) activity line (else `starting` / `running`). A run whose
+  record is missing counts as died only once its process is gone too.
 - Unsandboxed sessions with signed grants see the granted roles in the system prompt, with a nudge to use
   `role_agent` for work that fits one.
 - Host git run by pi-projects never runs repo hooks or fsmonitor (agents can write `.git`).

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { deliver, pending, type RunInfo, sessions, waitForRun, waitStep } from "../src/role-runs.ts";
+import { deliver, latestActivity, pending, type RunInfo, sessions, waitForRun, waitStep } from "../src/role-runs.ts";
 import { roleLines } from "../src/roles.ts";
 
 const KEY = Symbol.for("pi-background.v1");
@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 test("waitStep decisions", () => {
-	assert.deepEqual(waitStep(rec("running"), "r/dev", 130_000, false), { act: "wait", progress: "r/dev: running 2m10s" });
+	assert.deepEqual(waitStep(rec("running"), "r/dev", 130_000, false), { act: "wait", progress: "r/dev: running · 2m 10s" });
 	assert.equal(waitStep(undefined, "r/dev", 5_000, false).act, "wait");
 	assert.deepEqual(waitStep(undefined, "r/dev", 60_000, false), { act: "final", status: "died" });
 	assert.deepEqual(waitStep(rec("error", { error: "boom" }), "r/dev", 0, false), { act: "final", status: "error", error: "boom" });
@@ -56,7 +56,7 @@ test("done: returns the reply, reports progress, and is never delivered again", 
 	const r = await waitForRun(run(file), { ...clock(), onUpdate: (t) => updates.push(t) });
 	assert.equal(r.text, `r/dev run done (session: ${file})\n\nall merged`);
 	assert.equal(r.isError, false);
-	assert.deepEqual(updates, ["r/dev: starting 0s", "r/dev: running 5s"]);
+	assert.deepEqual(updates, ["r/dev: starting · 0s", "r/dev: running · 5s"]);
 	assert.equal(pending.length, 0);
 	const sent: any[] = [];
 	sessions.set("/parent.jsonl", { sendMessage: (m) => sent.push(m) });
@@ -145,4 +145,52 @@ test("unsandboxed session with grants lists roles and nudges role_agent", () => 
 test("sandboxed role session keeps the old wording", () => {
 	const lines = roleLines({ sandbox: true, roleId: "a/x", role: { description: "X" }, grant: { name: "p", roles: ["a/x", "b/y"] } }, () => "unused");
 	assert.deepEqual(lines.slice(3), ["Role: a/x (X).", "Granted roles you can delegate to with role_agent: b/y."]);
+});
+
+const activity = (text: string) => JSON.stringify({ type: "custom", customType: "pi-summarize", data: { kind: "activity", text, at: 1 } });
+
+test("progress shows the run's latest activity line", () => {
+	assert.deepEqual(waitStep(rec("running"), "r/dev", 380_000, false, undefined, { activity: "Fixing the DOM test" }), {
+		act: "wait",
+		progress: "r/dev: Fixing the DOM test · 6m 20s",
+	});
+	assert.deepEqual(waitStep(rec("waiting"), "r/dev", 3_000, false, undefined, {}), { act: "wait", progress: "r/dev: starting · 3s" });
+});
+
+test("waitForRun reports activity from the session file, never assistant text", async () => {
+	const file = sessionFile("secret plan");
+	writeFileSync(file, `${activity("Running the e2e suite")}\n`, { flag: "a" });
+	fakeBg([rec("running"), rec("done")]);
+	const updates: string[] = [];
+	await waitForRun(run(file), { ...clock(), onUpdate: (t) => updates.push(t) });
+	assert.deepEqual(updates, ["r/dev: Running the e2e suite · 0s"]);
+});
+
+test("latestActivity: truncated last line, cut first line, none", () => {
+	const d = mkdtempSync(join(tmpdir(), "role-act-"));
+	const f = join(d, "s.jsonl");
+	writeFileSync(f, `${"x".repeat(500)}\n${activity("Reading the brief")}\n${activity("Half written").slice(0, 60)}`);
+	assert.equal(latestActivity(f), "Reading the brief");
+	assert.equal(latestActivity(f, 80), undefined);
+	writeFileSync(f, `${JSON.stringify({ type: "message", message: { role: "assistant", content: "hi" } })}\n`);
+	assert.equal(latestActivity(f), undefined);
+	assert.equal(latestActivity(join(d, "missing.jsonl")), undefined);
+});
+
+test("a missing record is not death while the process lives", async () => {
+	assert.deepEqual(waitStep(undefined, "r/dev", 60_000, false, undefined, { gone: false }), { act: "wait", progress: "r/dev: running · 1m 00s" });
+	assert.deepEqual(waitStep(undefined, "r/dev", 60_000, false, undefined, { gone: true }), { act: "final", status: "died" });
+	// One poll misses the record (caught mid-rewrite), the next sees it done.
+	fakeBg([rec("running"), undefined, rec("done")]);
+	const r = await waitForRun(run(sessionFile("fine")), { ...clock(), limit: 60 * 60_000, now: (() => { let t = 0; return () => (t += 40_000); })(), alive: () => true });
+	assert.equal(r.status, "done");
+	// Background delivery waits too, and reports died once the process is gone.
+	pending.push(run(sessionFile("late")));
+	const sent: any[] = [];
+	sessions.set("/parent.jsonl", { sendMessage: (m) => sent.push(m) });
+	fakeBg([undefined]);
+	deliver(() => true);
+	assert.equal(sent.length, 0);
+	deliver(() => false);
+	assert.match(sent[0].content, /ended: died/);
 });
