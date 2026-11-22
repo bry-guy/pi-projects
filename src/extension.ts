@@ -31,7 +31,7 @@ import {
 	removeRepo,
 	renameProject,
 	scanWorkspace,
-	sessionTitle,
+	sessionInfo,
 	setState,
 	shareState,
 } from "./store.ts";
@@ -221,17 +221,24 @@ export default function (pi: ExtensionAPI) {
 
 	// ---------- commands ----------
 
-	const openProject = async (p: Project, ctx: ExtensionCommandContext) => {
+	const openProject = async (p: Project, ctx: ExtensionCommandContext, showRoleRuns = false) => {
 		assertActive(p);
-		const sessions = projectSessions(p).sort((a, b) => b.file.localeCompare(a.file));
+		const all = projectSessions(p)
+			.sort((a, b) => b.file.localeCompare(a.file))
+			.map((s) => ({ ...s, ...sessionInfo(s.file) }));
+		// Role runs report back to the session that started them, so they're hidden unless asked for.
+		const sessions = showRoleRuns ? all : all.filter((s) => !s.roleRun);
+		const hidden = all.length - sessions.length;
 		const NEW = "+ New session";
+		const SHOW = `Show role runs (${hidden})`;
 		const labels = sessions.map((s, i) => {
 			const info = s.header as { timestamp?: string };
 			// Index suffix keeps labels unique when two sessions share a title and minute.
-			return `${info.timestamp?.slice(0, 16).replace("T", " ") ?? "?"}  ${sessionTitle(s.file)}  #${i + 1}`;
+			return `${info.timestamp?.slice(0, 16).replace("T", " ") ?? "?"}  ${s.roleRun ? "role: " : ""}${s.title}  #${i + 1}`;
 		});
-		const choice = sessions.length ? await ctx.ui.select(`${p.name}: sessions`, [NEW, ...labels]) : NEW;
+		const choice = all.length ? await ctx.ui.select(`${p.name}: sessions`, [NEW, ...labels, ...(hidden ? [SHOW] : [])]) : NEW;
 		if (!choice) return;
+		if (hidden && choice === SHOW) return openProject(p, ctx, true);
 		let file: string;
 		if (choice === NEW) {
 			const sm = SessionManager.create(p.path);

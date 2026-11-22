@@ -5,7 +5,7 @@ import { relative, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { bg, deliver, sessions, track, waitForRun } from "./role-runs.ts";
-import { loadRole, runName, trustedGrants, validateRoleId } from "./roles.ts";
+import { loadRole, roleRunStart, runName, trustedGrants, validateRoleId } from "./roles.ts";
 import { assertActive, isInside, projectForCwd } from "./store.ts";
 
 export function registerRoleAgent(pi: ExtensionAPI) {
@@ -50,9 +50,9 @@ export function registerRoleAgent(pi: ExtensionAPI) {
 			const cwd = resolve(project.path, params.cwd ?? ".");
 			if (!isInside(cwd, project.path)) throw new Error("cwd must be inside the project");
 			const parentFile = ctx.sessionManager.getSessionFile() ?? "";
-			const msg = `You are running as role ${role} for project ${project.name}, started by another session to do one task. Nobody is watching this session; when you're done, end with a short summary of what you did, what you pushed, and anything left undone.\n\nTask:\n${params.task}`;
+			const { msg, env } = roleRunStart(role, project.name, params.task);
 			// An older pi-background ignores `name`; the run then keeps its first-message title.
-			const { file, pid } = start({ cwd, msg, env: { PI_ROLE: role }, name: runName(role, params.task) });
+			const { file, pid } = start({ cwd, msg, env, name: runName(role, params.task) });
 			const run = { parentFile, pid, role, file };
 			if (params.background || !pid) {
 				if (pid) track(run);
