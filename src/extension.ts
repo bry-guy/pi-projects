@@ -226,7 +226,8 @@ export default function (pi: ExtensionAPI) {
 		const all = projectSessions(p)
 			.sort((a, b) => b.file.localeCompare(a.file))
 			.map((s) => ({ ...s, ...sessionInfo(s.file) }));
-		// Role runs report back to the session that started them, so they're hidden unless asked for.
+		// Role runs report back to the session that started them, so they're hidden unless asked for. The row that
+		// shows them sits second: below a long list it was off screen.
 		const sessions = showRoleRuns ? all : all.filter((s) => !s.roleRun);
 		const hidden = all.length - sessions.length;
 		const NEW = "+ New session";
@@ -236,7 +237,7 @@ export default function (pi: ExtensionAPI) {
 			// Index suffix keeps labels unique when two sessions share a title and minute.
 			return `${info.timestamp?.slice(0, 16).replace("T", " ") ?? "?"}  ${s.roleRun ? "role: " : ""}${s.title}  #${i + 1}`;
 		});
-		const choice = all.length ? await ctx.ui.select(`${p.name}: sessions`, [NEW, ...labels, ...(hidden ? [SHOW] : [])]) : NEW;
+		const choice = all.length ? await ctx.ui.select(`${p.name}: sessions`, [NEW, ...(hidden ? [SHOW] : []), ...labels]) : NEW;
 		if (!choice) return;
 		if (hidden && choice === SHOW) return openProject(p, ctx, true);
 		let file: string;
