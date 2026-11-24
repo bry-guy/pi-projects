@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { deliver, latestActivity, pending, type RunInfo, sessions, waitForRun, waitStep } from "../src/role-runs.ts";
+import { deliver, latestActivity, pending, type RunInfo, runner, sessions, waitForRun, waitStep } from "../src/role-runs.ts";
 import { roleLines } from "../src/roles.ts";
 
 const KEY = Symbol.for("pi-background.v1");
@@ -218,4 +218,24 @@ test("a live pid that never gets a record is bounded: handover in the foreground
 	deliver(() => true, () => started + 15 * 60_000);
 	assert.match(sent[0].content, /ended: died/);
 	assert.equal(pending.length, 0);
+});
+
+test("the host's runner is used when it offers one, and pi-background is then never the runner", async () => {
+	const HOST = Symbol.for("pi-role-runner.v1");
+	const g = globalThis as any;
+	const started: string[] = [];
+	try {
+		delete g[KEY];
+		assert.equal(runner(), undefined, "neither: role_agent reports that it has no runner");
+		g[KEY] = { runs: () => [], start: (o: { msg: string }) => (started.push(o.msg), { file: "/run.jsonl", pid: 7 }) };
+		assert.deepEqual(runner()?.start?.({ cwd: "/", msg: "laptop" }), { file: "/run.jsonl", pid: 7 }, "pi-background alone: as before");
+		g[HOST] = { run: async () => Promise.reject(new Error("no worker holds r/dev's grant")) };
+		const via = runner();
+		assert.equal(via?.start, undefined, "with a host runner there is no pi-background start to fall back to");
+		await assert.rejects(via!.host!.run({ project: "p", role: "r/dev", msg: "m", name: "n", cwd: ".", session: "s", background: false }), /no worker holds/);
+		assert.deepEqual(started, ["laptop"]);
+	} finally {
+		delete g[HOST];
+		delete g[KEY];
+	}
 });

@@ -108,7 +108,7 @@ Agents use normal `git worktree add` from `repos/<repo>`, so existing worktree t
 - **Prompt:** at session start an unsandboxed session with signed grants lists the granted roles with their descriptions, then "Prefer role_agent for work that fits one of these roles: it runs sandboxed with only that role's credentials. Do the work yourself when it needs access no role has." A role run sees the other granted roles it can delegate to.
 - **Errors name the role:** a blocked host or missing secret says which granted role has it, e.g. "api.cloudflare.com is not allowed for this role; infra/infra-developer has it, use role_agent."
 - **A new session, not a fork.** A role agent starts as a fresh session in the project with just the task. It appears in the project's session history and can be opened, continued or taken over. Forking the calling session (`pi --fork`) to pass context is a later option.
-- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` asks the gateway to start the session in the role's worker. Whether it then shows up in the web UI depends on how pi-web lists project sessions across workers (pi-sync). Unverified. pi-web shows no role today; showing it comes with web roles.
+- **In pi-web:** roles map to workers. A role worker is a pi-workspaced worker whose grant carries that role's credentials and egress, as `ws-infra` does for infra today. `role_agent` takes its runner from the host when the host offers one (`Symbol.for("pi-role-runner.v1")`, `HostRunner` in `src/role-runs.ts`): a pi-web worker asks web to start a hidden run in the role's worker and gets the final reply back. The signed-grant and role-file checks run in the calling session as on the Mac; pi-web checks its own grant for the project again and is the authority there. pi-web shows no role today; showing it comes with web roles.
 - **Subagents stay** for same-role work. They inherit the parent's role or admin access and can't switch roles (see Admin sessions and role runs).
 
 ## Role agent runs
@@ -118,7 +118,7 @@ session appears in the project, and the reply is returned to the caller (or sent
 
 | | Mac | pi-web (Phase 2) |
 |---|---|---|
-| Runs as | pi-background's runner: a child `pi --mode rpc` plus a Gondolin VM (`pi-local-sandbox` image) | a role worker `ws-<project>--<role>` (`pi-web-worker` image), a workspaced worker whose grant carries the role's credentials and egress; it sleeps when idle |
+| Runs as | pi-background's runner: a child `pi --mode rpc` plus a Gondolin VM (`pi-local-sandbox` image) | a role worker `ws-<project>-<grant>` (`pi-web-worker` image), a workspaced worker whose grant carries the role's credentials and egress; it sleeps when idle |
 | Storage | the project's worktrees | the worker's disk |
 | Tools | the image plus a per-role mise cache | the image |
 
