@@ -39,6 +39,36 @@ export interface Pending {
 
 export const bg = (): BgApi | undefined => (globalThis as any)[Symbol.for("pi-background.v1")];
 
+/**
+ * A runner the host process offers in place of pi-background (pi-web's workers do). It runs the role in a sandbox
+ * of its own, decides again whether the project may use the role, and rejects with a plain reason when it can't.
+ */
+export interface HostRunner {
+	run(o: {
+		/** Project name */
+		project: string;
+		role: string;
+		/** First message of the run (roleRunStart) */
+		msg: string;
+		name: string;
+		/** Folder relative to the project, "." for its root */
+		cwd: string;
+		/** Id of the calling session, where a late result is delivered */
+		session: string;
+		background: boolean;
+		signal?: AbortSignal;
+		onUpdate?: (text: string) => void;
+	}): Promise<WaitResult>;
+}
+
+/** Who runs a role: the host's runner when it offers one (pi-background is then never used), else pi-background. */
+export function runner(): { host: HostRunner; start?: undefined } | { host?: undefined; start: BgApi["start"] } | undefined {
+	const host: HostRunner | undefined = (globalThis as any)[Symbol.for("pi-role-runner.v1")];
+	if (host) return { host };
+	const api = bg();
+	return api?.start ? { start: (o) => api.start(o) } : undefined;
+}
+
 // pi re-runs extension factories per session (in-process subagents too), so delivery state lives at module level.
 export const pending: Pending[] = [];
 /** Open sessions in this process by session file; a result goes only to the session that started the run. */

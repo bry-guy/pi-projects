@@ -1,10 +1,11 @@
 // role_agent: start a fresh session as a granted role (pi-background), sandboxed (pi-mounts). By default the call
 // waits and returns the run's final reply; with background: true, or once the run needs the user or takes long,
 // the result comes back to the calling session as a message when the run ends (src/role-runs.ts).
+// A host that offers its own runner (pi-web's workers) runs the role instead, in its own sandbox.
 import { relative, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { bg, deliver, sessions, track, waitForRun } from "./role-runs.ts";
+import { deliver, runner, sessions, track, waitForRun } from "./role-runs.ts";
 import { loadRole, roleRunStart, runName, trustedGrants, validateRoleId } from "./roles.ts";
 import { assertActive, isInside, projectForCwd } from "./store.ts";
 
@@ -45,14 +46,29 @@ export function registerRoleAgent(pi: ExtensionAPI) {
 			if (problem) throw new Error(`Can't start ${role}: ${problem}`);
 			if (!grants.projects[project.id]?.roles.includes(role)) throw new Error(`${role} is not granted to ${project.name}. Bryan grants roles with /project grant.`);
 			loadRole(project, role); // must exist on origin's default branch
-			const start = bg()?.start;
-			if (!start) throw new Error("role_agent needs pi-background installed");
+			const via = runner();
+			if (!via) throw new Error("role_agent needs pi-background installed");
 			const cwd = resolve(project.path, params.cwd ?? ".");
 			if (!isInside(cwd, project.path)) throw new Error("cwd must be inside the project");
 			const parentFile = ctx.sessionManager.getSessionFile() ?? "";
 			const { msg, env } = roleRunStart(role, project.name, params.task);
+			if (via.host) {
+				// The host's failure is the tool's error: there is no other way to run the role here.
+				const r = await via.host.run({
+					project: project.name,
+					role,
+					msg,
+					name: runName(role, params.task),
+					cwd: relative(project.path, cwd) || ".",
+					session: ctx.sessionManager.getSessionId(),
+					background: !!params.background,
+					signal,
+					onUpdate: (text) => onUpdate?.({ content: [{ type: "text", text }], details: { role } }),
+				});
+				return { content: [{ type: "text", text: r.text }], details: { role, status: r.status, background: r.background }, isError: r.isError };
+			}
 			// An older pi-background ignores `name`; the run then keeps its first-message title.
-			const { file, pid } = start({ cwd, msg, env, name: runName(role, params.task) });
+			const { file, pid } = via.start({ cwd, msg, env, name: runName(role, params.task) });
 			const run = { parentFile, pid, role, file, started: Date.now() };
 			if (params.background || !pid) {
 				if (pid) track(run);

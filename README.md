@@ -48,6 +48,9 @@ role's credentials. `/project sandbox on` sandboxes a project's interactive sess
   is doing now (`running <tool>`; with an older pi-background, the run's newest
   [pi-summarize](https://github.com/bry-guy/pi-summarize) activity line), else `starting` / `running`. A run whose
   record is missing counts as died once its process is gone, or once it has had no record for 15 minutes.
+  A host that sets `globalThis[Symbol.for("pi-role-runner.v1")] = { run(o) }` runs the role itself, in its own
+  sandbox, in place of pi-background (pi-web's workers do; `HostRunner` in `src/role-runs.ts`). The checks before the
+  run are the same, and the host's refusal is the tool's error.
   Role runs are not synced by pi-sync (unless you continue one yourself with `/bg` or `/resume`) and are
   hidden from the `/project` session list unless you pick `Show role runs (N)`, the second row.
 - Unsandboxed sessions with signed grants see the granted roles in the system prompt, with a nudge to use
