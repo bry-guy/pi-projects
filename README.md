@@ -5,6 +5,10 @@ Projects for pi: persistent workspaces of sessions, repos, memory and artifacts,
 ## Install
 
 ```sh
+pi install npm:@bry-guy/pi-projects
+# or from git:
+pi install git:github.com/bry-guy/pi-projects
+# or a local checkout:
 pi install /path/to/pi-projects   # or: pi -e /path/to/pi-projects
 ```
 

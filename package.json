@@ -5,7 +5,10 @@
   "type": "module",
   "keywords": ["pi-package", "pi", "projects"],
   "license": "MIT",
-  "files": ["src", "skills", "README.md", "docs"],
+  "repository": { "type": "git", "url": "git+https://github.com/bry-guy/pi-projects.git" },
+  "homepage": "https://github.com/bry-guy/pi-projects#readme",
+  "bugs": { "url": "https://github.com/bry-guy/pi-projects/issues" },
+  "files": ["src", "skills", "README.md", "LICENSE", "docs"],
   "pi": {
     "extensions": ["./src/extension.ts"],
     "skills": ["./skills"]
