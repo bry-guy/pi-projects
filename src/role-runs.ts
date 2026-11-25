@@ -13,6 +13,8 @@ const START_GRACE = 30_000;
 /** The parts of pi-background's Run (src/registry.ts) used here. */
 export interface RunInfo {
 	pid: number;
+	/** Session file the run writes. */
+	file?: string;
 	status: string;
 	error?: string;
 	waiting?: { title: string; message?: string }[];
@@ -21,6 +23,8 @@ export interface RunInfo {
 }
 export interface BgApi {
 	start(o: { cwd: string; msg: string; env?: Record<string, string>; name?: string }): { file: string; pid: number };
+	/** Runs msg as the next turn of an existing session file. Missing in pi-background before follow-ups. */
+	send?(o: { file: string; msg: string; env?: Record<string, string> }): { file: string; pid: number };
 	runs(): RunInfo[];
 	/** Missing in pi-background before stop() was published. */
 	stop?(pid: number): boolean;
@@ -44,11 +48,13 @@ export const bg = (): BgApi | undefined => (globalThis as any)[Symbol.for("pi-ba
  * of its own, decides again whether the project may use the role, and rejects with a plain reason when it can't.
  */
 export interface HostRunner {
+	/** True when run() takes `followUp`. Missing in hosts from before follow-ups, which would start a new run instead. */
+	followUps?: boolean;
 	run(o: {
 		/** Project name */
 		project: string;
 		role: string;
-		/** First message of the run (roleRunStart) */
+		/** First message of the run (roleRunStart); for a follow-up, the message to send as it is */
 		msg: string;
 		name: string;
 		/** Folder relative to the project, "." for its root */
@@ -56,6 +62,8 @@ export interface HostRunner {
 		/** Id of the calling session, where a late result is delivered */
 		session: string;
 		background: boolean;
+		/** An earlier run (the id its result named) to send msg to, in place of starting one. The host refuses when it can't. */
+		followUp?: string;
 		signal?: AbortSignal;
 		onUpdate?: (text: string) => void;
 	}): Promise<WaitResult>;
@@ -143,6 +151,16 @@ export function latestActivity(file: string, max = 64 * 1024): string | undefine
 		if (fd !== undefined) closeSync(fd);
 	}
 	return undefined;
+}
+
+/**
+ * True while a run still writes `file`: its record says so, or the runner last started on it (`last`) is up and
+ * has not written its record yet.
+ */
+export function stillRunning(file: string, last?: { pid?: number; started?: number }, alive = pidAlive, now = Date.now): boolean {
+	const runs = bg()?.runs() ?? [];
+	if (runs.some((r) => r.file === file && !FINAL.has(r.status))) return true;
+	return !!last?.pid && !runs.some((r) => r.pid === last.pid) && now() - (last.started ?? 0) < START_GRACE && alive(last.pid);
 }
 
 /** Sends ended runs' results to their parent sessions; runs whose parent isn't open here stay pending. */
