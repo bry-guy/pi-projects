@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { deliver, latestActivity, pending, type RunInfo, runner, sessions, waitForRun, waitStep } from "../src/role-runs.ts";
+import { deliver, latestActivity, pending, type RunInfo, runner, sessions, stillRunning, waitForRun, waitStep } from "../src/role-runs.ts";
 import { roleLines } from "../src/roles.ts";
 
 const KEY = Symbol.for("pi-background.v1");
@@ -238,4 +238,17 @@ test("the host's runner is used when it offers one, and pi-background is then ne
 		delete g[HOST];
 		delete g[KEY];
 	}
+});
+
+test("stillRunning: a live record for the session, or a runner just started on it that has no record yet", () => {
+	(globalThis as any)[KEY] = { runs: () => [rec("done", { file: "/a.jsonl" }), rec("running", { pid: 8, file: "/b.jsonl" }), rec("waiting", { pid: 9, file: "/c.jsonl" })] };
+	const up = () => true;
+	assert.equal(stillRunning("/a.jsonl", { pid: 7, started: 0 }, up, () => 1_000), false, "its record says it ended");
+	assert.equal(stillRunning("/b.jsonl"), true);
+	assert.equal(stillRunning("/c.jsonl"), true, "waiting for the session lock");
+	// Started a second ago, no record yet.
+	assert.equal(stillRunning("/d.jsonl", { pid: 10, started: 0 }, up, () => 1_000), true);
+	assert.equal(stillRunning("/d.jsonl", { pid: 10, started: 0 }, () => false, () => 1_000), false, "its runner is gone");
+	assert.equal(stillRunning("/d.jsonl", { pid: 10, started: 0 }, up, () => 60_000), false, "that pid is someone else by now");
+	delete (globalThis as any)[KEY];
 });
