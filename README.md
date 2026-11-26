@@ -44,10 +44,15 @@ role's credentials. `/project sandbox on` sandboxes a project's interactive sess
 - `/project roles`: grants, signature, missing secret sources. `/project grant <repo>/<role> [--default]`,
   `/project ungrant <repo>/<role>`, `/project source <repo>/<role> <NAME> <source>`, `/project sandbox on|off`,
   `/project sign` (review and sign the file as it is). Each change signs once (one Touch ID).
-- `role_agent(role, task, cwd?, background?)`: a fresh session as a granted role, sandboxed with that role's
+- `role_agent(role, task, cwd?, background?, session?)`: a fresh session as a granted role, sandboxed with that role's
   credentials (pi-background runs it). The call waits and returns the run's final reply; Esc stops the run (with a
   pi-background that has `stop()`). With `background: true`, or once the run asks the user something or passes 15
   minutes, the reply comes back to the calling session as a message instead. Role runs can't change grants.
+  With `session` (the session file an earlier call's result named), `task` is sent as the next message in that run's
+  session instead: same role, sandbox, credentials and folder, and every check a new run gets. It is refused unless
+  the calling session itself started that run as this role in this project (it keeps a `role-run` entry for each run
+  it starts; nothing the run's own session says counts), and while the run is still running. Needs a pi-background
+  that has `send()`.
   While it waits, the call's progress reads `<role>: <activity> · 6m 20s`, where `<activity>` is what the run's record says it
   is doing now (`running <tool>`; with an older pi-background, the run's newest
   [pi-summarize](https://github.com/bry-guy/pi-summarize) activity line), else `starting` / `running`. A run whose
