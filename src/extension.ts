@@ -224,7 +224,8 @@ export default function (pi: ExtensionAPI) {
 	const openProject = async (p: Project, ctx: ExtensionCommandContext, showRoleRuns = false) => {
 		assertActive(p);
 		const all = projectSessions(p)
-			.sort((a, b) => b.file.localeCompare(a.file))
+			// By start time, not file name: pi-sync names the files it brings in `<ms>_<id>`, which sort below pi's ISO names.
+			.sort((a, b) => String(b.header.timestamp ?? b.file).localeCompare(String(a.header.timestamp ?? a.file)))
 			.map((s) => ({ ...s, ...sessionInfo(s.file) }));
 		// Role runs report back to the session that started them, so they're hidden unless asked for. The row that
 		// shows them sits second: below a long list it was off screen.
