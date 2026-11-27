@@ -30,10 +30,13 @@ import {
 	remember,
 	removeRepo,
 	renameProject,
+	ROLE_RUN_PREFIX,
 	scanWorkspace,
 	sessionInfo,
 	setState,
 	shareState,
+	type SyncHandle,
+	withServerSessions,
 } from "./store.ts";
 import {
 	agentKeys,
@@ -223,10 +226,14 @@ export default function (pi: ExtensionAPI) {
 
 	const openProject = async (p: Project, ctx: ExtensionCommandContext, showRoleRuns = false) => {
 		assertActive(p);
-		const all = projectSessions(p)
-			// By start time, not file name: pi-sync names the files it brings in `<ms>_<id>`, which sort below pi's ISO names.
-			.sort((a, b) => String(b.header.timestamp ?? b.file).localeCompare(String(a.header.timestamp ?? a.file)))
-			.map((s) => ({ ...s, ...sessionInfo(s.file) }));
+		// With pi-sync, the project's conversations on other machines are listed too; picking one brings it here.
+		const pisync = (globalThis as any)[Symbol.for("pi-sync.v1")] as SyncHandle | undefined;
+		const all = (await withServerSessions(projectSessions(p), p.name, pisync)).map((s) => {
+			if ("file" in s) return { file: s.file, time: s.header.timestamp as string | undefined, server: undefined, ...sessionInfo(s.file) };
+			const on = s.devices.map((d) => d.label).join(", ");
+			const title = `${s.title || "untitled"}${on ? `  (on ${on})` : "  (not on this machine)"}`;
+			return { file: undefined, time: s.updatedAt, server: s, title, roleRun: s.title.startsWith(ROLE_RUN_PREFIX) };
+		});
 		// Role runs report back to the session that started them, so they're hidden unless asked for. The row that
 		// shows them sits second: below a long list it was off screen.
 		const sessions = showRoleRuns ? all : all.filter((s) => !s.roleRun);
@@ -234,20 +241,19 @@ export default function (pi: ExtensionAPI) {
 		const NEW = "+ New session";
 		const SHOW = `Show role runs (${hidden})`;
 		const labels = sessions.map((s, i) => {
-			const info = s.header as { timestamp?: string };
 			// Index suffix keeps labels unique when two sessions share a title and minute.
-			return `${info.timestamp?.slice(0, 16).replace("T", " ") ?? "?"}  ${s.roleRun ? "role: " : ""}${s.title}  #${i + 1}`;
+			return `${s.time?.slice(0, 16).replace("T", " ") ?? "?"}  ${s.roleRun ? "role: " : ""}${s.title}  #${i + 1}`;
 		});
 		const choice = all.length ? await ctx.ui.select(`${p.name}: sessions`, [NEW, ...(hidden ? [SHOW] : []), ...labels]) : NEW;
 		if (!choice) return;
 		if (hidden && choice === SHOW) return openProject(p, ctx, true);
-		let file: string;
-		if (choice === NEW) {
+		const picked = choice === NEW ? undefined : sessions[labels.indexOf(choice)];
+		if (picked?.server) return pisync!.open(ctx, picked.server.sessionId, picked.server.title);
+		let file = picked?.file;
+		if (!file) {
 			const sm = SessionManager.create(p.path);
 			file = sm.getSessionFile()!;
 			writeFileSync(file, `${JSON.stringify(sm.getHeader())}\n`);
-		} else {
-			file = sessions[labels.indexOf(choice)].file;
 		}
 		await ctx.switchSession(file);
 	};
