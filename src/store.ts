@@ -212,6 +212,53 @@ export function projectSessions(p: Project): SessionFile[] {
 	return allSessionFiles().filter((s) => s.header.cwd && isInside(s.header.cwd, p.path));
 }
 
+/** A conversation on the pi-sync server, as pi-sync's `list()` gives it; `local` when this machine has a file for it. */
+export interface ServerSession {
+	sessionId: string;
+	title: string;
+	project?: string;
+	updatedAt: string;
+	devices: { label: string }[];
+	local: boolean;
+}
+
+/** pi-sync's handle, at `globalThis[Symbol.for("pi-sync.v1")]` when pi-sync runs in this process. */
+export interface SyncHandle {
+	list(): Promise<ServerSession[]>;
+	open(ctx: unknown, sessionId: string, title?: string): Promise<void>;
+}
+
+/**
+ * A project's sessions, newest first: the local files plus the server's conversations for the project (by folder
+ * name) that this machine has no file for. Without pi-sync, or when its list fails or takes longer than `timeoutMs`,
+ * only the local ones.
+ */
+export async function withServerSessions(
+	local: SessionFile[],
+	project: string,
+	sync: Pick<SyncHandle, "list"> | undefined,
+	timeoutMs = 2000,
+): Promise<(SessionFile | ServerSession)[]> {
+	let server: ServerSession[] = [];
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		if (sync) {
+			const late = new Promise<never>((_, reject) => {
+				timer = setTimeout(reject, timeoutMs);
+			});
+			const ids = new Set(local.map((s) => s.header.id));
+			server = (await Promise.race([sync.list(), late])).filter((s) => s.project === project && !s.local && !ids.has(s.sessionId));
+		}
+	} catch {
+		// local sessions only
+	} finally {
+		clearTimeout(timer);
+	}
+	// By start time, not file name: pi-sync names the files it brings in `<ms>_<id>`, which sort below pi's ISO names.
+	const time = (s: SessionFile | ServerSession) => ("file" in s ? String(s.header.timestamp ?? s.file) : s.updatedAt);
+	return [...local, ...server].sort((a, b) => time(b).localeCompare(time(a)));
+}
+
 /** Start of a role run's first user message (written by role_agent); marks the session as a role run. */
 export const ROLE_RUN_PREFIX = "You are running as role ";
 
