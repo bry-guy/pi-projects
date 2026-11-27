@@ -185,3 +185,26 @@ test("saves keep keys written to project.json after this copy was loaded", () =>
 	const disk = JSON.parse(readFileSync(file, "utf8"));
 	assert.deepEqual([disk.state, disk.extra], ["archived", { a: 1 }]);
 });
+
+test("server sessions merge into a project's list by time, without duplicates, and never get in the way", async () => {
+	const local = (id: string, timestamp: string) => ({ file: `/s/${id}.jsonl`, header: { id, timestamp } });
+	const server = (sessionId: string, updatedAt: string, more = {}) => ({ sessionId, title: sessionId, project: "eco", updatedAt, devices: [{ label: "web" }], local: false, ...more });
+	const mine = [local("old", "2026-01-01T00:00:00.000Z"), local("new", "2026-01-03T00:00:00.000Z")];
+	const theirs = [
+		server("between", "2026-01-02T00:00:00Z"),
+		server("newest", "2026-01-04T00:00:00Z"),
+		server("new", "2026-01-05T00:00:00Z"), // this machine has it: same id as a local file
+		server("elsewhere", "2026-01-05T00:00:00Z", { local: true }), // or pi-sync says so
+		server("other-project", "2026-01-05T00:00:00Z", { project: "eco2" }),
+		server("no-project", "2026-01-05T00:00:00Z", { project: undefined }),
+	];
+	const ids = async (sync: any, timeoutMs?: number) =>
+		(await s.withServerSessions(mine, "eco", sync, timeoutMs)).map((x: any) => x.sessionId ?? x.header.id);
+	assert.deepEqual(await ids({ list: async () => theirs }), ["newest", "new", "between", "old"]);
+	const localOnly = ["new", "old"];
+	assert.deepEqual(await ids(undefined), localOnly, "pi-sync is not installed");
+	assert.deepEqual(await ids({ list: async () => Promise.reject(new Error("offline")) }), localOnly, "the list fails");
+	const started = Date.now();
+	assert.deepEqual(await ids({ list: () => new Promise((resolve) => setTimeout(() => resolve(theirs), 500)) }, 20), localOnly, "the list is slow");
+	assert.ok(Date.now() - started < 400, "a slow list is not waited for");
+});
