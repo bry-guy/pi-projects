@@ -46,6 +46,7 @@ import {
 	loadRole,
 	readGrants,
 	roleLines,
+	runName,
 	type SessionRole,
 	saveSignedGrants,
 	sessionRole,
@@ -228,11 +229,13 @@ export default function (pi: ExtensionAPI) {
 		assertActive(p);
 		// With pi-sync, the project's conversations on other machines are listed too; picking one brings it here.
 		const pisync = (globalThis as any)[Symbol.for("pi-sync.v1")] as SyncHandle | undefined;
+		// The server keeps only a run's name ("<role>: <task>"), not its first message.
+		const runNames = [ROLE_RUN_PREFIX, ...(readGrants().projects[p.id]?.roles ?? []).map((r) => `${runName(r, "")}: `)];
 		const all = (await withServerSessions(projectSessions(p), p.name, pisync)).map((s) => {
 			if ("file" in s) return { file: s.file, time: s.header.timestamp as string | undefined, server: undefined, ...sessionInfo(s.file) };
 			const on = s.devices.map((d) => d.label).join(", ");
 			const title = `${s.title || "untitled"}${on ? `  (on ${on})` : "  (not on this machine)"}`;
-			return { file: undefined, time: s.updatedAt, server: s, title, roleRun: s.title.startsWith(ROLE_RUN_PREFIX) };
+			return { file: undefined, time: s.updatedAt, server: s, title, roleRun: runNames.some((n) => s.title.startsWith(n)) };
 		});
 		// Role runs report back to the session that started them, so they're hidden unless asked for. The row that
 		// shows them sits second: below a long list it was off screen.
