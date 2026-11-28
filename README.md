@@ -15,6 +15,9 @@ pi install /path/to/pi-projects   # or: pi -e /path/to/pi-projects
 ## Use
 
 - `/project`: pick a project and a session, or create a project.
+  With pi-sync installed, the session list also shows the project's conversations that are on the sync server but
+  not on this machine (made on another machine or in pi-web), marked `(on <device>)`; picking one opens it here as
+  `/sync open` does. If the server does not answer within 2 seconds, the list shows this machine's sessions only.
 - `/project new|name|memory|repos|share|archive|restore|delete|list|doctor`
 - Tools for the agent: `project_clone`, `project_worktree`, `project_remember`.
 
